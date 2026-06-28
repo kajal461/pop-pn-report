@@ -51,3 +51,25 @@ def test_non_ab_winner_and_lift_are_false_and_zero():
     c2_row = df[df['Campaign ID'] == 'c2'].iloc[0]
     assert c2_row['ab_winner'] == False
     assert c2_row['ab_lift_ctr'] == 0.0
+
+def test_ctr_tie_marks_both_as_winners():
+    """When two A/B variations have identical CTR, both are marked as winners.
+    This is the defined behavior — no tie-breaking rule exists."""
+    df = detect_ab(pd.DataFrame([
+        {'Campaign ID': 'tie', 'Variation': 1, 'All Platform CTR': 8.4,
+         'Goal 1 Click Through Converted Users All Platform': 0,
+         'Goal 2 Click Through Converted Users All Platform': 0,
+         'Goal 3 Click Through Converted Users All Platform': 0,
+         'Goal 4 Click Through Converted Users All Platform': 0,
+         'Goal 5 Click Through Converted Users All Platform': 0},
+        {'Campaign ID': 'tie', 'Variation': 2, 'All Platform CTR': 8.4,
+         'Goal 1 Click Through Converted Users All Platform': 0,
+         'Goal 2 Click Through Converted Users All Platform': 0,
+         'Goal 3 Click Through Converted Users All Platform': 0,
+         'Goal 4 Click Through Converted Users All Platform': 0,
+         'Goal 5 Click Through Converted Users All Platform': 0},
+    ]))
+    tie_rows = df[df['Campaign ID'] == 'tie']
+    # Both marked as winner when CTR is identical — no tiebreaker defined
+    assert all(tie_rows['ab_winner'])
+    assert all(tie_rows['ab_lift_ctr'] == 0.0)
