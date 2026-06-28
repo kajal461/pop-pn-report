@@ -26,8 +26,12 @@ def _emoji_position(text: str, emojis: list) -> str:
 
 
 def _contains_any(text: str, phrases: list) -> bool:
+    """Check if text contains any phrase with word-boundary matching."""
     lower = text.lower()
-    return any(p.lower() in lower for p in phrases)
+    return any(
+        bool(re.search(r'\b' + re.escape(p.lower()) + r'\b', lower))
+        for p in phrases
+    )
 
 
 def _analyse_row(row: pd.Series) -> dict:
@@ -46,7 +50,7 @@ def _analyse_row(row: pd.Series) -> dict:
         'emoji_count':            emoji_count,
         'emoji_count_bucket':     '0' if emoji_count == 0 else ('1' if emoji_count == 1 else '2+'),
         'emoji_position':         _emoji_position(title, emojis),
-        'title_char_length':      len(title),
+        'title_char_length':      len(title.strip()),
         'title_word_count':       title_words,
         'title_length_bucket':    ('Short' if title_words <= 5 else ('Medium' if title_words <= 9 else 'Long')),
         'body_word_count':        body_words,

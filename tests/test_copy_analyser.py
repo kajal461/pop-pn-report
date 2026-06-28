@@ -121,3 +121,23 @@ def test_is_forced_genz():
 def test_is_corporate_jargon():
     df = analyse_copy(_df('Redeem your eligible POPcoins'))
     assert df.iloc[0]['is_corporate_jargon'] == True
+
+def test_action_verb_no_false_positive_on_forget():
+    """'get' in ACTION_VERBS must not match inside 'forget'."""
+    df = analyse_copy(_df('I forget sometimes'))
+    assert df.iloc[0]['has_action_verb'] == False
+
+def test_corporate_jargon_no_false_positive_on_available():
+    """'avail' in CORPORATE_JARGON must not match inside 'available'."""
+    df = analyse_copy(_df('Offer available for you'))
+    assert df.iloc[0]['is_corporate_jargon'] == False
+
+def test_forced_genz_no_false_positive_on_family():
+    """'fam' in FORCED_GENZ must not match inside 'family'."""
+    df = analyse_copy(_df('Share with family'))
+    assert df.iloc[0]['is_forced_genz'] == False
+
+def test_fomo_no_false_positive_on_unlimited():
+    """'limited' in FOMO_WORDS must not match inside 'unlimited'."""
+    df = analyse_copy(_df('Unlimited cashback every day'))
+    assert df.iloc[0]['has_fomo_signal'] == False
