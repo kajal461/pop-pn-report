@@ -1,7 +1,11 @@
 """
 Writes all 7 output tabs to Google Sheets.
 Never touches 'raw_input' or 'shop_lookup' — those are user-managed input tabs.
+
+For large DataFrames (e.g. master_enriched with 4K+ rows × 87 cols), data is written
+in chunks of CHUNK_SIZE rows to avoid hitting the Google Sheets API request size limit.
 """
+import time
 import pandas as pd
 import gspread
 from gspread_dataframe import set_with_dataframe
@@ -20,30 +24,62 @@ OUTPUT_TAB_NAMES = [
 # These tabs must NEVER be overwritten — they are user-managed inputs
 PROTECTED_TABS = {'raw_input', 'shop_lookup'}
 
+# Rows per API request for large DataFrames. 500 rows × 87 cols ≈ 40K cells — well within limits.
+CHUNK_SIZE = 500
 
-def _ensure_worksheet(sh: gspread.Spreadsheet, name: str) -> gspread.Worksheet:
+
+def _ensure_worksheet(sh: gspread.Spreadsheet, name: str, rows: int = 10000) -> gspread.Worksheet:
     """Get worksheet by name, creating it if it doesn't exist."""
     try:
         return sh.worksheet(name)
     except gspread.exceptions.WorksheetNotFound:
-        return sh.add_worksheet(title=name, rows=10000, cols=200)
+        return sh.add_worksheet(title=name, rows=rows, cols=200)
 
 
 def _write_tab(sh: gspread.Spreadsheet, tab_name: str, df: pd.DataFrame) -> None:
-    """Clear a tab and write a DataFrame to it. Refuses to write to protected tabs."""
+    """
+    Clear a tab and write a DataFrame to it in chunks.
+    Refuses to write to protected tabs.
+    """
     if tab_name in PROTECTED_TABS:
         raise ValueError(
             f"Refusing to write to protected tab '{tab_name}'. "
             f"Protected tabs: {sorted(PROTECTED_TABS)}"
         )
-    ws = _ensure_worksheet(sh, tab_name)
-    ws.clear()
-    if df is not None and not df.empty:
-        df_out = df.copy().astype(str)
-        set_with_dataframe(ws, df_out, include_index=False, resize=True)
-        print(f'  ✓ {tab_name}: {len(df_out)} rows written')
-    else:
+
+    if df is None or df.empty:
+        ws = _ensure_worksheet(sh, tab_name)
+        ws.clear()
         print(f'  ✗ {tab_name}: empty DataFrame, tab cleared but no data written')
+        return
+
+    df_out = df.copy().astype(str)
+    n_rows = len(df_out)
+
+    # Ensure the sheet is large enough before writing
+    ws = _ensure_worksheet(sh, tab_name, rows=max(n_rows + 10, 10000))
+    ws.clear()
+
+    if n_rows <= CHUNK_SIZE:
+        # Small enough for a single request
+        set_with_dataframe(ws, df_out, include_index=False, resize=True)
+    else:
+        # Write header + first chunk together, then append remaining chunks
+        first_chunk = df_out.iloc[:CHUNK_SIZE]
+        set_with_dataframe(ws, first_chunk, include_index=False, resize=False)
+
+        for start in range(CHUNK_SIZE, n_rows, CHUNK_SIZE):
+            chunk = df_out.iloc[start:start + CHUNK_SIZE]
+            # Append after the already-written rows (row index is 1-based, +1 for header)
+            next_row = start + 2  # +1 for header, +1 for 1-based index
+            ws.update(
+                range_name=f'A{next_row}',
+                values=chunk.values.tolist(),
+            )
+            time.sleep(0.5)  # Stay well within the 100 req/100s quota
+
+    print(f'  ✓ {tab_name}: {n_rows} rows written'
+          + (f' ({(n_rows // CHUNK_SIZE) + 1} chunks)' if n_rows > CHUNK_SIZE else ''))
 
 
 def write_all_tabs(
