@@ -1,0 +1,6 @@
+pandas==2.2.2
+gspread==6.1.2
+gspread-dataframe==4.0.0
+emoji==2.12.1
+python-dotenv==1.0.1
+pytest==8.2.2
