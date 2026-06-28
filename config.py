@@ -1,5 +1,4 @@
 # config.py
-import os
 from datetime import date
 
 # ── Google Sheets column names (MoEngage export) ────────────────────────────
@@ -16,9 +15,11 @@ COL_TAG_POPCARD      = 'Tag Category: POPcard'
 COL_TAG_RUPAY        = 'Tag Category: Rupay'
 COL_TAG_UNCATEGORIZED = 'Tag Category: Uncategorized'
 COL_TAG_SHOP         = 'Tag Category: shop'
+# Note: MoEngage exports this tag category in lowercase — not a typo
 
 COL_ANDROID_TITLE    = 'Android Message Title (Android, Web), Title (iOS)'
 COL_IOS_TITLE        = 'Ios Message Title (Android, Web), Title (iOS)'
+# Note: MoEngage exports these columns with 'Ios' capitalisation — not a typo
 COL_ANDROID_BODY     = 'Android Message (Android, Web), Subtitle (iOS)'
 COL_IOS_BODY         = 'Ios Message (Android, Web), Subtitle (iOS)'
 COL_RICH_IMAGE       = 'Android Rich Content Image URL'
@@ -54,6 +55,7 @@ BU_NAMED_TAGS = {
     'Rupay':   COL_TAG_RUPAY,
     'Shop':    COL_TAG_SHOP,
 }
+# BUs that live inside the Uncategorized tag column (no dedicated tag category in MoEngage)
 BU_UNCATEGORIZED = ['UPI', 'RCBP', 'POPchop']
 ALL_BUS = ['UPI', 'POPcard', 'Rupay', 'Shop', 'RCBP', 'POPchop']
 
@@ -65,13 +67,14 @@ TIME_SLOTS = [
     ('Evening', 14, 19),
     ('Night',   19, 24),
 ]
-PAYDAY_DAYS = list(range(1, 8))
+PAYDAY_DAYS = list(range(1, 8))  # Days 1–7 of the month treated as payday period (salary credit window)
 
 PRE_JUNE_START  = date(2026, 3, 1)
 PRE_JUNE_END    = date(2026, 5, 31)
 POST_JUNE_START = date(2026, 6, 1)
 BRAND_ERA_PRE   = 'Pre-June'
 BRAND_ERA_POST  = 'Post-June'
+# Date ranges are inclusive: Pre-June = [PRE_JUNE_START, PRE_JUNE_END], Post-June = [POST_JUNE_START, present]
 
 # ── Copy analysis keyword lists ───────────────────────────────────────────────
 ACTION_VERBS = [
@@ -99,7 +102,7 @@ CORPORATE_JARGON_WORDS = [
     'herewith', 'aforementioned',
 ]
 LECTURE_Y_PHRASES = [
-    'please note', 'kindly', 'you should', 'it is important', 'remember to',
+    'please note', 'you should', 'it is important', 'remember to',
     'as a reminder', 'we would like to inform', 'this is to inform',
 ]
 CLICHE_PHRASES = [
@@ -135,5 +138,5 @@ DO_PRIORITY = [
 ]
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
-MIN_SENT_THRESHOLD = 500
-TOP_N = 5
+MIN_SENT_THRESHOLD = 500   # minimum All Platform Sent to be included in Top/Bottom ranking
+TOP_N = 5                  # number of campaigns shown in top and bottom ranking tables
