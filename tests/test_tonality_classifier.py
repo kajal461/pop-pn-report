@@ -35,13 +35,19 @@ def test_lecture_y_labelled():
     df = classify_tonality(_df('Important information', body=body))
     assert df.iloc[0]['tonality'] == "DON'T: Lecture-y"
 
+def test_vague_labelled():
+    # "check this out" is in VAGUE_PHRASES but NOT in CLICHE_PHRASES
+    df = classify_tonality(_df("Check this out now"))
+    assert df.iloc[0]['tonality'] == "DON'T: Vague"
+
 def test_cliche_labelled():
     df = classify_tonality(_df("Exclusive offer just for you"))
     assert df.iloc[0]['tonality'] == "DON'T: Cliche"
 
-def test_vague_labelled():
+def test_something_special_is_cliche_not_vague():
+    """'Something special awaits' matches both Cliche and Vague — Cliche wins per priority."""
     df = classify_tonality(_df("Something special awaits"))
-    assert df.iloc[0]['tonality'] == "DON'T: Vague"
+    assert df.iloc[0]['tonality'] == "DON'T: Cliche"
 
 def test_value_aware_labelled():
     df = classify_tonality(_df('Get cashback', has_specific_number=True))

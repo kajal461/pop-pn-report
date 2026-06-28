@@ -43,10 +43,10 @@ def _classify_row(row: pd.Series) -> dict:
         tone = "DON'T: Condescending"
     elif _contains_phrase(full, LECTURE_Y_PHRASES) or body_words > 30:
         tone = "DON'T: Lecture-y"
-    elif _contains_phrase(full, VAGUE_PHRASES) and not row.get('has_specific_number', False):
-        tone = "DON'T: Vague"
     elif _contains_phrase(full, CLICHE_PHRASES):
         tone = "DON'T: Cliche"
+    elif _contains_phrase(full, VAGUE_PHRASES) and not row.get('has_specific_number', False):
+        tone = "DON'T: Vague"
 
     # ── DO checks (priority order) ─────────────────────────────────────────
     elif row.get('has_specific_number', False):
