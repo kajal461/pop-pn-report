@@ -3,6 +3,7 @@ import pandas as pd
 from config import (
     COL_ANDROID_TITLE, COL_ANDROID_BODY,
     LECTURE_Y_PHRASES, CLICHE_PHRASES, CONDESCENDING_PHRASES, VAGUE_PHRASES,
+    LECTURE_MAX_WORDS,
 )
 
 # Patterns for DO classification
@@ -41,7 +42,7 @@ def _classify_row(row: pd.Series) -> dict:
         tone = "DON'T: Corporate Jargon"
     elif _contains_phrase(full, CONDESCENDING_PHRASES):
         tone = "DON'T: Condescending"
-    elif _contains_phrase(full, LECTURE_Y_PHRASES) or body_words > 30:
+    elif _contains_phrase(full, LECTURE_Y_PHRASES) or body_words > LECTURE_MAX_WORDS:
         tone = "DON'T: Lecture-y"
     elif _contains_phrase(full, CLICHE_PHRASES):
         tone = "DON'T: Cliche"
