@@ -1,13 +1,14 @@
 import pandas as pd
 import pytest
 from src.bu_tagger import tag_bu
+from config import COL_TAG_POPCARD, COL_TAG_RUPAY, COL_TAG_UNCATEGORIZED, COL_TAG_SHOP
 
 def _row(popcard='[]', rupay='[]', uncategorized='[]', shop='[]'):
     return pd.DataFrame([{
-        'Tag Category: POPcard': popcard,
-        'Tag Category: Rupay': rupay,
-        'Tag Category: Uncategorized': uncategorized,
-        'Tag Category: shop': shop,
+        COL_TAG_POPCARD: popcard,
+        COL_TAG_RUPAY: rupay,
+        COL_TAG_UNCATEGORIZED: uncategorized,
+        COL_TAG_SHOP: shop,
     }])
 
 def test_upi_from_uncategorized():
@@ -47,3 +48,15 @@ def test_unknown_tag_returns_unknown():
 def test_is_multi_bu_false_for_single_bu():
     df = tag_bu(_row(uncategorized="['UPI']"))
     assert df.iloc[0]['is_multi_bu'] == False
+
+def test_nan_cells_return_unknown():
+    """Real MoEngage CSVs can have float NaN in tag cells — must return Unknown."""
+    import numpy as np
+    df = pd.DataFrame([{
+        'Tag Category: POPcard': float('nan'),
+        'Tag Category: Rupay': float('nan'),
+        'Tag Category: Uncategorized': float('nan'),
+        'Tag Category: shop': float('nan'),
+    }])
+    result = tag_bu(df)
+    assert result.iloc[0]['bu'] == 'Unknown'

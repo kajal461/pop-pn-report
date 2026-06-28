@@ -6,9 +6,13 @@ from config import (
 )
 
 
-def _parse_tag_list(value: str) -> list:
-    """Extract string values from MoEngage list-as-string: "['UPI']" → ['UPI']"""
-    if not isinstance(value, str) or value.strip() in ('[]', '', 'nan'):
+def _parse_tag_list(value) -> list:
+    """Extract string values from MoEngage list-as-string: "['UPI']" → ['UPI'].
+    Handles float NaN, None, and empty/invalid strings safely.
+    """
+    if not isinstance(value, str):
+        return []          # handles float NaN, None, int, etc.
+    if value.strip() in ('[]', '', 'nan'):
         return []
     return re.findall(r"'([^']+)'", value)
 
@@ -18,11 +22,11 @@ def _detect_bus(row: pd.Series) -> list:
     found = []
     # Named tag categories (POPcard, Rupay, Shop)
     for bu_name, col in BU_NAMED_TAGS.items():
-        if col in row.index and _parse_tag_list(str(row[col])):
+        if col in row.index and _parse_tag_list(row[col]):
             found.append(bu_name)
     # Uncategorized tag column (UPI, RCBP, POPchop)
     if COL_TAG_UNCATEGORIZED in row.index:
-        tags = _parse_tag_list(str(row[COL_TAG_UNCATEGORIZED]))
+        tags = _parse_tag_list(row[COL_TAG_UNCATEGORIZED])
         for tag in tags:
             if tag in BU_UNCATEGORIZED:
                 found.append(tag)
