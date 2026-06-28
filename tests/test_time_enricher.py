@@ -94,3 +94,18 @@ def test_pn_sequence_position():
     assert df.iloc[0]['pn_sequence_position'] == 1
     assert df.iloc[1]['pn_sequence_position'] == 2
     assert df.iloc[2]['pn_sequence_position'] == 3
+
+def test_brand_era_june_1_boundary():
+    """June 1 itself must be Post-June (inclusive boundary)."""
+    df = enrich_time(_df('2026-06-01 00:00:00'))
+    assert df.iloc[0]['brand_guidelines_era'] == 'Post-June'
+
+def test_nat_input_produces_safe_defaults():
+    """Unparseable Campaign Sent Time must not crash — produces safe default values."""
+    df = enrich_time(pd.DataFrame([{
+        'Campaign Sent Time': 'not_a_date', 'Campaign ID': 'x', 'bu': 'UPI'
+    }]))
+    row = df.iloc[0]
+    assert row['time_slot_bucket'] == 'Other'
+    assert row['day_of_month_bucket'] == 'Rest of Month'
+    assert row['brand_guidelines_era'] == 'Pre-June'
