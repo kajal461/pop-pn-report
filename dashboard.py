@@ -317,6 +317,19 @@ def render_insight_box(title, items, box_type='info'):
     """, unsafe_allow_html=True)
 
 
+def fmt_delta(v):
+    """Format a numeric delta as +X.X% or -X.X%. Returns '—' for null/invalid."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return '—'
+    try:
+        f = float(str(v).replace('%', '').replace('+', ''))
+        if pd.isna(f):
+            return '—'
+        return f'{f:+.1f}%'
+    except Exception:
+        return '—' if str(v) in ['None', 'nan', ''] else str(v)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
@@ -661,144 +674,269 @@ if page == '📊 Executive Overview':
 # PAGE 2 — BU PERFORMANCE
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '🏢 BU Performance':
-    st.title('🏢 BU Performance')
-
+    # ── Data prep ─────────────────────────────────────────────────────────────
     monthly = by_bu[by_bu['period_type'] == 'Monthly'].copy() if 'period_type' in by_bu.columns else by_bu.copy()
     if selected_bus and 'bu' in monthly.columns:
         monthly = monthly[monthly['bu'].isin(selected_bus)]
-    monthly = monthly.sort_values(['bu', 'period_label']) if 'bu' in monthly.columns and 'period_label' in monthly.columns else monthly
+    monthly = monthly.sort_values(['bu', 'period_label'])
 
-    # ── Insight callout ───────────────────────────────────────────────────────
-    if not monthly.empty and 'bu' in monthly.columns and 'All_Platform_CTR' in monthly.columns:
-        insight_items = []
-        monthly['All_Platform_CTR'] = pd.to_numeric(monthly['All_Platform_CTR'], errors='coerce')
+    for col in ['All_Platform_CTR', 'All_Platform_Sent', 'primary_conversions',
+                'campaign_count', 'mom_ctr_delta_pct', 'ab_test_count']:
+        if col in monthly.columns:
+            monthly[col] = pd.to_numeric(monthly[col], errors='coerce')
 
-        # Best performing BU (latest month)
-        if 'period_label' in monthly.columns:
-            latest_month = monthly['period_label'].max()
-            latest_bu_df = monthly[monthly['period_label'] == latest_month]
-            if not latest_bu_df.empty:
-                best_idx = latest_bu_df['All_Platform_CTR'].idxmax()
-                best_bu = latest_bu_df.loc[best_idx, 'bu']
-                best_ctr = latest_bu_df.loc[best_idx, 'All_Platform_CTR']
-                insight_items.append(f"🏆 **{best_bu}** leads in {latest_month} with **{best_ctr:.2f}% CTR**.")
+    latest_month = monthly['period_label'].max() if not monthly.empty and 'period_label' in monthly.columns else '—'
+    n_bus = monthly['bu'].nunique() if 'bu' in monthly.columns else 0
 
-        # MOM improvement
-        if 'mom_ctr_delta_pct' in monthly.columns and 'period_label' in monthly.columns:
-            latest_data = monthly[monthly['period_label'] == monthly['period_label'].max()].copy()
-            latest_data['mom_ctr_delta_pct'] = pd.to_numeric(latest_data['mom_ctr_delta_pct'], errors='coerce')
-            if not latest_data.empty:
-                most_improved_idx = latest_data['mom_ctr_delta_pct'].idxmax()
-                most_improved_bu = latest_data.loc[most_improved_idx, 'bu']
-                most_improved_delta = latest_data.loc[most_improved_idx, 'mom_ctr_delta_pct']
-                if pd.notna(most_improved_delta):
-                    insight_items.append(f"📈 **{most_improved_bu}** improved most MOM with **{most_improved_delta:+.1f}%** CTR change.")
-                declined_idx = latest_data['mom_ctr_delta_pct'].idxmin()
-                declined_bu = latest_data.loc[declined_idx, 'bu']
-                declined_delta = latest_data.loc[declined_idx, 'mom_ctr_delta_pct']
-                if pd.notna(declined_delta) and declined_delta < 0:
-                    insight_items.append(f"📉 **{declined_bu}** saw the biggest drop: **{declined_delta:.1f}%** MOM — worth reviewing copy strategy.")
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">🏢 BU Performance</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{latest_month} · {n_bus} Business Units · MOM & WOW</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-        render_insight_box('BU Performance Highlights', insight_items)
+    # ── BU Scorecard cards (latest month) ────────────────────────────────────
+    if not monthly.empty and 'period_label' in monthly.columns:
+        latest_bu = monthly[monthly['period_label'] == latest_month].copy()
+        prev_month = monthly[monthly['period_label'] < latest_month]['period_label'].max() if len(monthly['period_label'].unique()) > 1 else None
 
-    st.markdown('---')
+        def delta_arrow_html(val, good_if_positive=True):
+            if val is None or pd.isna(val): return '<span style="color:#94a3b8">—</span>'
+            is_good = (val > 0 and good_if_positive) or (val < 0 and not good_if_positive)
+            colour = '#22c55e' if is_good else '#ef4444'
+            arrow = '↑' if val > 0 else '↓'
+            return f'<span style="color:{colour};font-weight:700">{arrow}{abs(val):.1f}%</span>'
 
-    # ── Top campaign per BU callout ───────────────────────────────────────────
-    title_col = 'Android_Message_Title_Android_Web_Title_iOS'
-    if title_col in filtered_master.columns and 'bu' in filtered_master.columns:
-        st.subheader('Best Campaign This Month by BU')
-        if 'sent_month' in filtered_master.columns:
-            latest_m = filtered_master['sent_month'].max()
-            latest_master = filtered_master[filtered_master['sent_month'] == latest_m]
-        else:
-            latest_master = filtered_master
+        def sent_fmt(v):
+            try:
+                v = float(v)
+                if v >= 1_000_000: return f'{v/1_000_000:.1f}M'
+                if v >= 1_000: return f'{v/1_000:.0f}K'
+                return f'{v:,.0f}'
+            except: return '—'
 
-        if not latest_master.empty and 'All_Platform_CTR' in latest_master.columns:
-            top_by_bu = latest_master.groupby('bu').apply(
-                lambda x: x.loc[pd.to_numeric(x['All_Platform_CTR'], errors='coerce').idxmax()]
-                if pd.to_numeric(x['All_Platform_CTR'], errors='coerce').notna().any() else None
-            ).dropna()
+        # Colour map per BU
+        bu_colours = {
+            'UPI': '#4F46E5', 'POPcard': '#7C3AED', 'Rupay': '#0891b2',
+            'Shop': '#059669', 'RCBP': '#d97706', 'POPchop': '#dc2626', 'Unknown': '#94a3b8'
+        }
 
-            cols = st.columns(min(3, len(top_by_bu)))
-            for i, (bu_name, row) in enumerate(top_by_bu.iterrows()):
-                col_idx = i % len(cols)
-                with cols[col_idx]:
-                    ctr_val = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce')
-                    ctr_str = f'{ctr_val:.1f}%' if pd.notna(ctr_val) else '—'
-                    title_text = str(row.get(title_col, '—'))[:60]
-                    st.success(f"**{bu_name}** — {ctr_str} CTR\n\n*\"{title_text}\"*")
+        cards_per_row = min(3, len(latest_bu))
+        if cards_per_row > 0:
+            rows_needed = -(-len(latest_bu) // cards_per_row)
+            bu_rows = [latest_bu.iloc[i*cards_per_row:(i+1)*cards_per_row] for i in range(rows_needed)]
+            for row_data in bu_rows:
+                cols = st.columns(cards_per_row)
+                for col_idx, (_, bu_row) in enumerate(row_data.iterrows()):
+                    bu_name = str(bu_row.get('bu', '—'))
+                    ctr = bu_row.get('All_Platform_CTR', 0) or 0
+                    sent = bu_row.get('All_Platform_Sent', 0) or 0
+                    camps = int(bu_row.get('campaign_count', 0) or 0)
+                    mom_delta = bu_row.get('mom_ctr_delta_pct', None)
+                    border_col = bu_colours.get(bu_name, '#64748b')
+                    with cols[col_idx]:
+                        st.markdown(f"""
+                        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;
+                                    padding:16px;border-top:4px solid {border_col};margin-bottom:12px">
+                            <div style="font-size:11px;color:#64748b;font-weight:700;
+                                        text-transform:uppercase;letter-spacing:0.08em">{bu_name}</div>
+                            <div style="font-size:28px;font-weight:800;color:#0f172a;margin:8px 0 2px">{ctr:.2f}%</div>
+                            <div style="font-size:12px">CTR &nbsp;|&nbsp; MOM: {delta_arrow_html(mom_delta)}</div>
+                            <div style="font-size:11px;color:#94a3b8;margin-top:6px">
+                                {sent_fmt(sent)} sent &nbsp;·&nbsp; {camps:,} campaigns
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-        st.markdown('---')
+    st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
-    # ── BU CTR comparison table ───────────────────────────────────────────────
-    st.subheader('BU Performance Summary (Monthly)')
-    show_cols = ['bu', 'period_label', 'All_Platform_CTR', 'mom_ctr_delta_pct',
-                 'All_Platform_Sent', 'primary_conversions', 'campaign_count', 'ab_test_count']
-    show_cols = [c for c in show_cols if c in monthly.columns]
+    # ── Key insights ──────────────────────────────────────────────────────────
+    insight_items = []
+    if not monthly.empty and 'period_label' in monthly.columns and 'All_Platform_CTR' in monthly.columns:
+        latest_data = monthly[monthly['period_label'] == latest_month].copy()
+        if not latest_data.empty:
+            best_idx = latest_data['All_Platform_CTR'].idxmax()
+            best_bu = latest_data.loc[best_idx, 'bu']
+            best_ctr = latest_data.loc[best_idx, 'All_Platform_CTR']
+            insight_items.append(f"🏆 **{best_bu}** leads this month with **{best_ctr:.2f}% CTR** — review its top campaigns for copy patterns to replicate.")
 
-    if not monthly.empty and show_cols:
-        table_df = monthly[show_cols].rename(columns={
-            'bu': 'BU', 'period_label': 'Month', 'All_Platform_CTR': 'Avg CTR (%)',
-            'mom_ctr_delta_pct': 'CTR MOM Δ (%)', 'All_Platform_Sent': 'Total Sent',
-            'primary_conversions': 'Conversions', 'campaign_count': 'Campaigns',
+            if 'mom_ctr_delta_pct' in latest_data.columns:
+                valid_mom = latest_data.dropna(subset=['mom_ctr_delta_pct'])
+                if not valid_mom.empty:
+                    top_idx = valid_mom['mom_ctr_delta_pct'].idxmax()
+                    top_bu = valid_mom.loc[top_idx, 'bu']
+                    top_delta = valid_mom.loc[top_idx, 'mom_ctr_delta_pct']
+                    if pd.notna(top_delta) and top_delta > 0:
+                        insight_items.append(f"📈 **{top_bu}** improved the most MOM: **{top_delta:+.1f}%**. Investigate what changed in its copy or targeting.")
+
+                    bot_idx = valid_mom['mom_ctr_delta_pct'].idxmin()
+                    bot_bu = valid_mom.loc[bot_idx, 'bu']
+                    bot_delta = valid_mom.loc[bot_idx, 'mom_ctr_delta_pct']
+                    if pd.notna(bot_delta) and bot_delta < 0:
+                        insight_items.append(f"📉 **{bot_bu}** dropped the most MOM: **{bot_delta:.1f}%**. Check for copy compliance issues or audience fatigue.")
+
+    render_insight_box('BU Performance Highlights', insight_items)
+
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+    # ── CTR trend chart per BU ────────────────────────────────────────────────
+    st.markdown('<div class="section-header">CTR Trend by BU (Month-over-Month)</div>', unsafe_allow_html=True)
+    if not monthly.empty and 'All_Platform_CTR' in monthly.columns and 'bu' in monthly.columns:
+        bus_in_data = monthly['bu'].unique()
+        palette = ['#4F46E5','#7C3AED','#0891b2','#059669','#d97706','#dc2626','#94a3b8']
+        colour_map = {bu: palette[i % len(palette)] for i, bu in enumerate(sorted(bus_in_data))}
+
+        fig_trend = go.Figure()
+        for bu_name in sorted(bus_in_data):
+            bu_data = monthly[monthly['bu'] == bu_name].sort_values('period_label')
+            if bu_data.empty: continue
+            col_c = colour_map.get(bu_name, '#64748b')
+            # Label only last point to avoid clutter
+            labels = [''] * len(bu_data)
+            if len(labels) > 0:
+                labels[-1] = f"{bu_name}: {bu_data['All_Platform_CTR'].iloc[-1]:.1f}%"
+            fig_trend.add_trace(go.Scatter(
+                x=bu_data['period_label'],
+                y=bu_data['All_Platform_CTR'],
+                mode='lines+markers+text',
+                name=bu_name,
+                text=labels,
+                textposition='middle right',
+                textfont=dict(size=11, color=col_c),
+                line=dict(color=col_c, width=2.5),
+                marker=dict(size=8, color=col_c),
+                hovertemplate=f'<b>{bu_name}</b><br>%{{x}}<br>CTR: %{{y:.2f}}%<extra></extra>',
+            ))
+        fig_trend.update_layout(
+            height=380, margin=dict(t=20, b=20, l=10, r=120),
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+            yaxis=dict(title='CTR (%)', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(size=11)),
+            legend=dict(orientation='v', yanchor='middle', y=0.5, xanchor='left', x=1.01, font=dict(size=11)),
+            showlegend=True,
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ── BU MOM table ──────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="margin-top:8px">Month-by-Month Breakdown by BU</div>', unsafe_allow_html=True)
+    if not monthly.empty:
+        tbl_cols = ['bu', 'period_label', 'campaign_count', 'All_Platform_Sent',
+                    'All_Platform_CTR', 'primary_conversions', 'mom_ctr_delta_pct', 'ab_test_count']
+        tbl_cols = [c for c in tbl_cols if c in monthly.columns]
+        tbl = monthly[tbl_cols].copy()
+
+        # Format columns
+        if 'All_Platform_CTR' in tbl.columns:
+            tbl['All_Platform_CTR'] = tbl['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
+        if 'All_Platform_Sent' in tbl.columns:
+            tbl['All_Platform_Sent'] = tbl['All_Platform_Sent'].apply(lambda x: sent_fmt(x))
+        if 'primary_conversions' in tbl.columns:
+            tbl['primary_conversions'] = tbl['primary_conversions'].apply(lambda x: f'{int(x):,}' if pd.notna(x) else '—')
+        if 'campaign_count' in tbl.columns:
+            tbl['campaign_count'] = tbl['campaign_count'].apply(lambda x: f'{int(x):,}' if pd.notna(x) else '—')
+        if 'mom_ctr_delta_pct' in tbl.columns:
+            tbl['mom_ctr_delta_pct'] = tbl['mom_ctr_delta_pct'].apply(fmt_delta)
+        if 'ab_test_count' in tbl.columns:
+            tbl['ab_test_count'] = tbl['ab_test_count'].apply(lambda x: f'{int(x):,}' if pd.notna(x) else '—')
+
+        tbl = tbl.rename(columns={
+            'bu': 'BU', 'period_label': 'Month', 'campaign_count': 'Campaigns',
+            'All_Platform_Sent': 'Total Sent', 'All_Platform_CTR': 'Avg CTR',
+            'primary_conversions': 'Conversions', 'mom_ctr_delta_pct': 'CTR MOM Δ',
             'ab_test_count': 'A/B Tests',
         })
 
-        def color_delta_col(val):
-            if pd.isna(val) or val == '': return ''
+        def colour_delta_bu(val):
             try:
-                v = float(val)
-                return 'color: #16a34a; font-weight: bold' if v > 0 else 'color: #dc2626; font-weight: bold'
-            except Exception:
-                return ''
+                v = float(str(val).replace('%','').replace('+',''))
+                if v > 0: return 'color: #16a34a; font-weight: 600'
+                if v < 0: return 'color: #dc2626; font-weight: 600'
+            except: pass
+            return ''
 
-        delta_col = 'CTR MOM Δ (%)' if 'CTR MOM Δ (%)' in table_df.columns else None
-        if delta_col:
-            styled = table_df.style.applymap(color_delta_col, subset=[delta_col])
-            st.dataframe(styled, use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(table_df, use_container_width=True, hide_index=True)
+        styled = tbl.style.applymap(colour_delta_bu, subset=['CTR MOM Δ'] if 'CTR MOM Δ' in tbl.columns else [])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    st.markdown('---')
+    # ── Best campaign per BU ──────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="margin-top:16px">Best Campaign This Month — by BU</div>', unsafe_allow_html=True)
+    st.caption('Highest CTR campaign in the latest month per BU. Use these as copy benchmarks.')
 
-    # ── CTR trend per BU ─────────────────────────────────────────────────────
-    st.subheader('CTR Trend by BU')
-    if not monthly.empty and 'All_Platform_CTR' in monthly.columns and 'bu' in monthly.columns:
-        fig = px.line(monthly, x='period_label', y='All_Platform_CTR', color='bu',
-                     markers=True,
-                     labels={'period_label': 'Month', 'All_Platform_CTR': 'CTR (%)', 'bu': 'BU'})
-        fig.update_traces(line_width=2, marker_size=7)
-        fig.update_layout(height=400, margin=dict(t=20, b=20),
-                         plot_bgcolor='#fafafa', paper_bgcolor='white')
-        st.plotly_chart(fig, use_container_width=True)
+    title_col = 'Android_Message_Title_Android_Web_Title_iOS'
+    body_col  = 'Android_Message_Android_Web_Subtitle_iOS'
 
-    col1, col2 = st.columns(2)
-    with col1:
-        # ── Campaign volume per BU ─────────────────────────────────────────────
-        st.subheader('Campaign Volume by BU')
-        if not monthly.empty and 'campaign_count' in monthly.columns and 'bu' in monthly.columns:
-            vol_df = monthly.groupby('bu')['campaign_count'].sum().reset_index().sort_values('campaign_count', ascending=False)
-            fig_vol = px.bar(vol_df, x='bu', y='campaign_count',
-                            labels={'bu': 'BU', 'campaign_count': 'Total Campaigns'},
-                            color='campaign_count', color_continuous_scale='Blues')
-            fig_vol.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig_vol, use_container_width=True)
+    if title_col in filtered_master.columns and 'bu' in filtered_master.columns and 'sent_month' in filtered_master.columns:
+        latest_m = filtered_master['sent_month'].max()
+        latest_m_df = filtered_master[filtered_master['sent_month'] == latest_m].copy()
+        latest_m_df['All_Platform_CTR'] = pd.to_numeric(latest_m_df['All_Platform_CTR'], errors='coerce')
 
-    with col2:
-        # ── WOW table ─────────────────────────────────────────────────────────
-        st.subheader('Week-over-Week CTR by BU')
-        weekly = by_bu[by_bu['period_type'] == 'Weekly'] if 'period_type' in by_bu.columns else pd.DataFrame()
-        if not weekly.empty and selected_bus and 'bu' in weekly.columns:
-            weekly = weekly[weekly['bu'].isin(selected_bus)]
-        if not weekly.empty:
-            wow_cols = ['bu', 'period_label', 'All_Platform_CTR', 'wow_ctr_delta_pct', 'campaign_count']
-            wow_cols = [c for c in wow_cols if c in weekly.columns]
-            st.dataframe(weekly[wow_cols].sort_values(['bu', 'period_label']).rename(columns={
-                'bu': 'BU', 'period_label': 'Week', 'All_Platform_CTR': 'Avg CTR (%)',
-                'wow_ctr_delta_pct': 'CTR WOW Δ (%)', 'campaign_count': 'Campaigns',
-            }), use_container_width=True, hide_index=True)
-        else:
-            st.info('Weekly data not available.')
+        if not latest_m_df.empty:
+            top_by_bu = (
+                latest_m_df.sort_values('All_Platform_CTR', ascending=False)
+                .groupby('bu').first().reset_index()
+            )
+            cols_cards = st.columns(min(3, len(top_by_bu)))
+            for i, row in top_by_bu.iterrows():
+                bu_name = str(row.get('bu', ''))
+                ctr_v = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce')
+                ctr_s = f'{ctr_v:.2f}%' if pd.notna(ctr_v) else '—'
+                title_s = str(row.get(title_col, '—'))[:80]
+                body_s  = str(row.get(body_col, '—'))[:100]
+                tone    = str(row.get('tonality', '—'))
+                compliant = row.get('brand_compliant', False)
+                compliant_badge = '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700">✅ Brand Compliant</span>' if str(compliant).lower() == 'true' else '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700">❌ Non-Compliant</span>'
+                border_col = bu_colours.get(bu_name, '#64748b')
+                col_idx = i % len(cols_cards)
+                with cols_cards[col_idx]:
+                    st.markdown(f"""
+                    <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;
+                                padding:16px;border-left:4px solid {border_col};margin-bottom:12px">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                            <span style="font-size:13px;font-weight:700;color:{border_col}">{bu_name}</span>
+                            <span style="font-size:20px;font-weight:800;color:#0f172a">{ctr_s} CTR</span>
+                        </div>
+                        <div style="font-size:13px;font-weight:600;color:#0f172a;margin-bottom:4px">"{title_s}"</div>
+                        <div style="font-size:12px;color:#475569;margin-bottom:8px">{body_s}</div>
+                        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Tone: <em>{tone}</em></div>
+                        {compliant_badge}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # ── WOW table ─────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="margin-top:16px">Week-over-Week CTR by BU</div>', unsafe_allow_html=True)
+    weekly = by_bu[by_bu['period_type'] == 'Weekly'].copy() if 'period_type' in by_bu.columns else pd.DataFrame()
+    if not weekly.empty and selected_bus and 'bu' in weekly.columns:
+        weekly = weekly[weekly['bu'].isin(selected_bus)]
+    if not weekly.empty and 'All_Platform_CTR' in weekly.columns:
+        weekly['All_Platform_CTR'] = pd.to_numeric(weekly['All_Platform_CTR'], errors='coerce')
+        if 'wow_ctr_delta_pct' in weekly.columns:
+            weekly['wow_ctr_delta_pct'] = pd.to_numeric(weekly['wow_ctr_delta_pct'], errors='coerce')
+        wow_tbl = weekly.sort_values(['bu', 'period_label'])
+        wow_display_cols = ['bu', 'period_label', 'All_Platform_CTR', 'wow_ctr_delta_pct', 'campaign_count']
+        wow_display_cols = [c for c in wow_display_cols if c in wow_tbl.columns]
+        wow_tbl = wow_tbl[wow_display_cols].copy()
+        if 'All_Platform_CTR' in wow_tbl.columns:
+            wow_tbl['All_Platform_CTR'] = wow_tbl['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
+        if 'wow_ctr_delta_pct' in wow_tbl.columns:
+            wow_tbl['wow_ctr_delta_pct'] = wow_tbl['wow_ctr_delta_pct'].apply(fmt_delta)
+        if 'campaign_count' in wow_tbl.columns:
+            wow_tbl['campaign_count'] = wow_tbl['campaign_count'].apply(lambda x: f'{int(x):,}' if pd.notna(x) else '—')
+        wow_tbl = wow_tbl.rename(columns={
+            'bu': 'BU', 'period_label': 'Week', 'All_Platform_CTR': 'Avg CTR',
+            'wow_ctr_delta_pct': 'CTR WOW Δ', 'campaign_count': 'Campaigns',
+        })
+        styled_wow = wow_tbl.style.applymap(colour_delta_bu, subset=['CTR WOW Δ'] if 'CTR WOW Δ' in wow_tbl.columns else [])
+        st.dataframe(styled_wow, use_container_width=True, hide_index=True)
+    else:
+        st.info('Weekly WOW data not available for selected BUs.')
+
+    # ── Next steps ────────────────────────────────────────────────────────────
+    next_steps_bu = [
+        "👉 **Go to Copy Intelligence** — filter by your top BU to see what copy is driving its CTR",
+        "👉 **Go to Top & Bottom Campaigns** — filter by your weakest BU to find the campaigns dragging it down",
+        "📋 **Action:** For any BU dropping MOM, compare its pre/post June brand compliance rate on the Brand Guidelines page",
+    ]
+    render_insight_box('Recommended next steps', next_steps_bu, box_type='success')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
