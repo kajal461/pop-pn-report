@@ -126,6 +126,12 @@ def compute_overall(master_df):
 
     agg['mom_All_Platform_CTR_delta_pct'] = agg['All_Platform_CTR'].pct_change().mul(100).round(2)
     agg['mom_All_Platform_Sent_delta_pct'] = agg['All_Platform_Sent'].pct_change().mul(100).round(2)
+    # Null out deltas when previous period had < 10 campaigns (statistically meaningless)
+    campaign_counts = agg['campaign_count'].values
+    for i in range(1, len(agg)):
+        if campaign_counts[i-1] < 10:
+            agg.iloc[i, agg.columns.get_loc('mom_All_Platform_CTR_delta_pct')] = None
+            agg.iloc[i, agg.columns.get_loc('mom_All_Platform_Sent_delta_pct')] = None
     return agg
 
 
@@ -364,6 +370,15 @@ if page == '📊 Executive Overview':
         bu_label = ', '.join(selected_bus)
     else:
         ov = overall.sort_values('period_label') if 'period_label' in overall.columns else overall.copy()
+        # Suppress deltas where previous month < 10 campaigns
+        if 'campaign_count' in ov.columns:
+            ov = ov.copy()
+            cc = ov['campaign_count'].values
+            for i in range(1, len(ov)):
+                if pd.notna(cc[i-1]) and float(cc[i-1]) < 10:
+                    for dcol in ['mom_All_Platform_CTR_delta_pct', 'mom_All_Platform_Sent_delta_pct']:
+                        if dcol in ov.columns:
+                            ov.iloc[i, ov.columns.get_loc(dcol)] = None
         bu_label = 'All BUs'
 
     if ov.empty:
@@ -584,7 +599,7 @@ if page == '📊 Executive Overview':
         tbl = ov[table_cols].copy()
         rename_map = {
             'period_label': 'Month',
-            'campaign_count': 'Campaigns',
+            'campaign_count': 'Campaigns (unique)',
             'All_Platform_Sent': 'Total Sent',
             'All_Platform_CTR': 'Avg CTR (%)',
             'primary_conversions': 'Conversions',
@@ -592,15 +607,19 @@ if page == '📊 Executive Overview':
             'mom_All_Platform_Sent_delta_pct': 'Volume MOM Δ (%)',
         }
         tbl = tbl.rename(columns=rename_map)
+        def fmt_delta(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return '—'
+            try:
+                f = float(str(v).replace('%','').replace('+',''))
+                if pd.isna(f):
+                    return '—'
+                return f'{f:+.1f}%'
+            except:
+                return '—' if str(v) in ['None', 'nan', ''] else str(v)
+
         for delta_col in ['CTR MOM Δ (%)', 'Volume MOM Δ (%)']:
             if delta_col in tbl.columns:
-                def fmt_delta(v):
-                    try:
-                        f = float(v)
-                        if pd.isna(f): return '—'
-                        return f'{f:+.1f}%'
-                    except:
-                        return str(v) if v not in [None, 'None', 'nan'] else '—'
                 tbl[delta_col] = tbl[delta_col].apply(fmt_delta)
         if 'Total Sent' in tbl.columns:
             tbl['Total Sent'] = tbl['Total Sent'].apply(lambda x: f'{x:,.0f}' if pd.notna(x) else '—')
@@ -608,8 +627,8 @@ if page == '📊 Executive Overview':
             tbl['Conversions'] = tbl['Conversions'].apply(lambda x: f'{x:,.0f}' if pd.notna(x) else '—')
         if 'Avg CTR (%)' in tbl.columns:
             tbl['Avg CTR (%)'] = tbl['Avg CTR (%)'].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
-        if 'Campaigns' in tbl.columns:
-            tbl['Note'] = tbl['Campaigns'].apply(
+        if 'Campaigns (unique)' in tbl.columns:
+            tbl['Note'] = tbl['Campaigns (unique)'].apply(
                 lambda x: '⚠️ Low sample' if (str(x).replace(',','').isdigit() and int(str(x).replace(',','')) < 10) else ''
             )
 
@@ -624,6 +643,7 @@ if page == '📊 Executive Overview':
 
         styled_tbl = tbl.style.applymap(colour_delta_cell, subset=[c for c in ['CTR MOM Δ (%)', 'Volume MOM Δ (%)'] if c in tbl.columns])
         st.dataframe(styled_tbl, use_container_width=True, hide_index=True)
+        st.caption('ℹ️ "Campaigns (unique)" counts distinct Campaign IDs. A/B test campaigns with multiple variations are counted once.')
 
         # ── Next steps ────────────────────────────────────────────────────────
         next_steps = []
