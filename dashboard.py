@@ -494,7 +494,7 @@ if page == '📊 Executive Overview':
                 fig.update_layout(
                     height=340, margin=dict(t=30, b=30, l=10, r=10),
                     plot_bgcolor='white', paper_bgcolor='white',
-                    xaxis=dict(showgrid=False, tickfont=dict(size=12)),
+                    xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
                     yaxis=dict(showgrid=True, gridcolor='#f1f5f9',
                                title='CTR (%)', tickfont=dict(size=11)),
                     showlegend=False,
@@ -517,11 +517,63 @@ if page == '📊 Executive Overview':
                 fig2.update_layout(
                     height=340, margin=dict(t=30, b=30, l=10, r=10),
                     plot_bgcolor='white', paper_bgcolor='white',
-                    xaxis=dict(showgrid=False, tickfont=dict(size=12)),
+                    xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
                     yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(size=11)),
                     showlegend=False,
                 )
                 st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown('<div class="section-header" style="margin-top:8px">Volume vs CTR — Quality as You Scale</div>', unsafe_allow_html=True)
+        st.caption('As campaign volume grows, does CTR hold up? This is the core scale-up quality question.')
+
+        if 'campaign_count' in ov.columns and 'All_Platform_CTR' in ov.columns and len(ov) >= 2:
+            ov_plot = ov.copy()
+            ov_plot['campaign_count'] = pd.to_numeric(ov_plot['campaign_count'], errors='coerce')
+            ov_plot['All_Platform_CTR'] = pd.to_numeric(ov_plot['All_Platform_CTR'], errors='coerce')
+
+            # Dual axis: bars = campaigns, line = CTR
+            fig3 = go.Figure()
+            fig3.add_trace(go.Bar(
+                x=ov_plot['period_label'], y=ov_plot['campaign_count'],
+                name='Campaigns Sent', yaxis='y',
+                marker_color='#c7d2fe', opacity=0.8,
+                text=ov_plot['campaign_count'].apply(lambda x: f'{int(x):,}' if pd.notna(x) else ''),
+                textposition='outside',
+                textfont=dict(size=11),
+            ))
+            fig3.add_trace(go.Scatter(
+                x=ov_plot['period_label'], y=ov_plot['All_Platform_CTR'],
+                name='Avg CTR (%)', yaxis='y2', mode='lines+markers+text',
+                text=[f'{v:.1f}%' for v in ov_plot['All_Platform_CTR']],
+                textposition='top center',
+                textfont=dict(size=11, color='#dc2626'),
+                line=dict(color='#dc2626', width=3),
+                marker=dict(size=9, color='#dc2626'),
+            ))
+            fig3.update_layout(
+                height=320,
+                margin=dict(t=30, b=30, l=10, r=60),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+                yaxis=dict(title='Campaigns', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(size=11)),
+                yaxis2=dict(title='CTR (%)', overlaying='y', side='right', showgrid=False, tickfont=dict(size=11)),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                barmode='overlay',
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+
+            # Auto-insight about volume vs CTR relationship
+            ov_sorted = ov_plot.sort_values('campaign_count')
+            correlation_negative = ov_sorted['All_Platform_CTR'].iloc[-1] < ov_sorted['All_Platform_CTR'].iloc[0]
+            if correlation_negative:
+                st.markdown("""
+                <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin:8px 0">
+                    <strong style="color:#dc2626">⚠️ Inverse Volume-CTR relationship detected</strong><br>
+                    <span style="font-size:13px;color:#7f1d1d">As campaign volume increased, average CTR declined.
+                    This is a classic scale-up dilution pattern — new campaigns added at high volume tend to be less targeted
+                    than the core campaigns. The fix: improve copy quality on high-volume campaigns or tighten audience segmentation.</span>
+                </div>
+                """, unsafe_allow_html=True)
 
         # ── MOM Table ─────────────────────────────────────────────────────────
         st.markdown('<div class="section-header" style="margin-top:16px">Month-by-Month Breakdown</div>', unsafe_allow_html=True)
@@ -540,12 +592,26 @@ if page == '📊 Executive Overview':
             'mom_All_Platform_Sent_delta_pct': 'Volume MOM Δ (%)',
         }
         tbl = tbl.rename(columns=rename_map)
+        for delta_col in ['CTR MOM Δ (%)', 'Volume MOM Δ (%)']:
+            if delta_col in tbl.columns:
+                def fmt_delta(v):
+                    try:
+                        f = float(v)
+                        if pd.isna(f): return '—'
+                        return f'{f:+.1f}%'
+                    except:
+                        return str(v) if v not in [None, 'None', 'nan'] else '—'
+                tbl[delta_col] = tbl[delta_col].apply(fmt_delta)
         if 'Total Sent' in tbl.columns:
             tbl['Total Sent'] = tbl['Total Sent'].apply(lambda x: f'{x:,.0f}' if pd.notna(x) else '—')
         if 'Conversions' in tbl.columns:
             tbl['Conversions'] = tbl['Conversions'].apply(lambda x: f'{x:,.0f}' if pd.notna(x) else '—')
         if 'Avg CTR (%)' in tbl.columns:
             tbl['Avg CTR (%)'] = tbl['Avg CTR (%)'].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
+        if 'Campaigns' in tbl.columns:
+            tbl['Note'] = tbl['Campaigns'].apply(
+                lambda x: '⚠️ Low sample' if (str(x).replace(',','').isdigit() and int(str(x).replace(',','')) < 10) else ''
+            )
 
         # Colour CTR delta column
         def colour_delta_cell(val):
