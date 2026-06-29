@@ -287,15 +287,26 @@ def fmt_num(val, decimals=0):
     if pd.isna(val): return '—'
     return f'{val:,.{decimals}f}'
 
-def render_insight_box(title, items):
-    """Render a styled insight box."""
+def render_insight_box(title, items, box_type='info'):
+    """Render a styled insight box. Converts **markdown bold** to <strong> HTML."""
     if not items:
         return
-    bullet_html = ''.join(f'<li>{item}</li>' for item in items)
+    import re
+    def md_to_html(text):
+        return re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', str(text))
+
+    colour_map = {
+        'info':    ('eff6ff', 'bfdbfe', '1e40af'),
+        'success': ('f0fdf4', '86efac', '166534'),
+        'warning': ('fffbeb', 'fcd34d', '92400e'),
+        'danger':  ('fef2f2', 'fecaca', '991b1b'),
+    }
+    bg, border, text_col = colour_map.get(box_type, colour_map['info'])
+    bullet_html = ''.join(f'<li style="color:#{text_col};font-size:13px;margin-bottom:5px">{md_to_html(item)}</li>' for item in items)
     st.markdown(f"""
-    <div class="insight-box">
-        <h4>💡 {title}</h4>
-        <ul>{bullet_html}</ul>
+    <div style="background:#{bg};border:1px solid #{border};border-radius:10px;padding:16px 20px;margin:12px 0">
+        <div style="font-weight:700;color:#{text_col};font-size:14px;margin-bottom:10px">💡 {title}</div>
+        <ul style="margin:0;padding-left:20px">{bullet_html}</ul>
     </div>
     """, unsafe_allow_html=True)
 
@@ -347,100 +358,217 @@ if 'All_Platform_Sent' in filtered_master.columns:
 # PAGE 1 — EXECUTIVE OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 if page == '📊 Executive Overview':
-    st.title('📊 Executive Overview')
-
     # BU filter fix: recompute from master if BU filter active
     if bu_filtered:
         ov = compute_overall(filtered_master)
-        st.caption(f'Showing data for: {", ".join(selected_bus)} — recomputed from campaign data')
+        bu_label = ', '.join(selected_bus)
     else:
         ov = overall.sort_values('period_label') if 'period_label' in overall.columns else overall.copy()
-        st.caption('Last 3 months of PN performance — all BUs combined')
+        bu_label = 'All BUs'
 
     if ov.empty:
-        st.warning('No data available for the selected filters.')
+        st.warning('No data available for selected filters.')
     else:
         ov = ov.sort_values('period_label')
         latest = ov.iloc[-1]
         prev   = ov.iloc[-2] if len(ov) > 1 else pd.Series(dtype='float64')
 
-        # ── Scorecards ────────────────────────────────────────────────────────
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            sent = latest.get('All_Platform_Sent', 0)
-            delta = fmt_pct(latest.get('mom_All_Platform_Sent_delta_pct', None))
-            st.metric('Total Sent', fmt_num(sent), delta=delta)
-        with c2:
-            ctr = latest.get('All_Platform_CTR', 0)
-            delta = fmt_pct(latest.get('mom_All_Platform_CTR_delta_pct', None))
-            st.metric('Avg CTR', f'{ctr:.2f}%', delta=delta)
-        with c3:
-            conv = latest.get('primary_conversions', 0)
-            st.metric('Total Conversions', fmt_num(conv))
-        with c4:
-            funnel = latest.get('end_to_end_funnel_rate', None)
-            if funnel is None or pd.isna(funnel):
-                # Try to get from master
-                if 'end_to_end_funnel_rate' in filtered_master.columns:
-                    funnel_val = pd.to_numeric(filtered_master['end_to_end_funnel_rate'], errors='coerce').mean()
-                    funnel_str = f'{funnel_val*100:.3f}%' if pd.notna(funnel_val) else '—'
-                else:
-                    funnel_str = '—'
-            else:
-                funnel_str = f'{funnel*100:.3f}%'
-            st.metric('End-to-End Funnel Rate', funnel_str)
+        # ── Page header ───────────────────────────────────────────────────────
+        latest_month = latest.get('period_label', '')
+        n_campaigns  = int(latest.get('campaign_count', 0))
+        st.markdown(f"""
+        <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+            <h1 style="margin:0;font-size:28px;font-weight:800">📊 Executive Overview</h1>
+            <span style="font-size:14px;color:#64748b;font-weight:500">{latest_month} · {bu_label} · {n_campaigns:,} campaigns</span>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.markdown('---')
+        # ── HTML Metric Cards ─────────────────────────────────────────────────
+        sent       = float(latest.get('All_Platform_Sent', 0) or 0)
+        ctr        = float(latest.get('All_Platform_CTR', 0) or 0)
+        conv       = float(latest.get('primary_conversions', 0) or 0)
+        ctr_delta  = latest.get('mom_All_Platform_CTR_delta_pct', None)
+        sent_delta = latest.get('mom_All_Platform_Sent_delta_pct', None)
 
-        # ── Auto-Insights ─────────────────────────────────────────────────────
-        insights_items = insights_overview(ov, filtered_master)
-        if insights_items:
-            render_insight_box('Key findings this period', insights_items)
+        # End-to-end funnel from master
+        funnel_val = None
+        if 'end_to_end_funnel_rate' in filtered_master.columns:
+            funnel_val = pd.to_numeric(filtered_master['end_to_end_funnel_rate'], errors='coerce').mean()
 
-        st.markdown('')
+        def delta_html(val, invert=False):
+            if val is None or pd.isna(val):
+                return '<span style="color:#94a3b8">— vs last month</span>'
+            is_good = (val > 0 and not invert) or (val < 0 and invert)
+            colour = '#22c55e' if is_good else '#ef4444'
+            arrow  = '↑' if val > 0 else '↓'
+            return f'<span style="color:{colour};font-weight:600">{arrow} {abs(val):.1f}% vs last month</span>'
+
+        def sent_fmt(v):
+            if v >= 1_000_000: return f'{v/1_000_000:.1f}M'
+            if v >= 1_000: return f'{v/1_000:.0f}K'
+            return f'{v:,.0f}'
+
+        cards_html = f"""
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0">
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px;border-top:4px solid #4F46E5">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Total Sent</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:10px 0 4px">{sent_fmt(sent)}</div>
+                <div style="font-size:12px">{delta_html(sent_delta)}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:4px">{sent:,.0f} notifications</div>
+            </div>
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px;border-top:4px solid {'#ef4444' if ctr_delta and ctr_delta < 0 else '#22c55e'}">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Avg CTR</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:10px 0 4px">{ctr:.2f}%</div>
+                <div style="font-size:12px">{delta_html(ctr_delta)}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:4px">clicks ÷ sent</div>
+            </div>
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px;border-top:4px solid #f59e0b">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Total Conversions</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:10px 0 4px">{sent_fmt(conv)}</div>
+                <div style="font-size:12px;color:#94a3b8">users who completed a goal</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:4px">{conv:,.0f} total</div>
+            </div>
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:20px;border-top:4px solid #06b6d4">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">End-to-End Funnel</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:10px 0 4px">{f'{funnel_val*100:.3f}%' if funnel_val is not None and pd.notna(funnel_val) else '—'}</div>
+                <div style="font-size:12px;color:#94a3b8">sent → converted</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:4px">full funnel efficiency</div>
+            </div>
+        </div>
+        """
+        st.markdown(cards_html, unsafe_allow_html=True)
+
+        # ── Auto-generated period narrative ───────────────────────────────────
+        insight_items = insights_overview(ov, filtered_master)
+
+        # Add scale-up context if campaigns grew significantly
+        if len(ov) >= 2:
+            prev_camps = prev.get('campaign_count', 0) or 0
+            curr_camps = latest.get('campaign_count', 0) or 0
+            if prev_camps > 0 and curr_camps / prev_camps > 1.5 and ctr_delta and ctr_delta < 0:
+                scale_pct = (curr_camps - prev_camps) / prev_camps * 100
+                insight_items.insert(1,
+                    f"⚠️ **Scale-up effect:** Campaign volume grew **{scale_pct:.0f}%** MOM "
+                    f"({int(prev_camps):,} → {int(curr_camps):,} campaigns). "
+                    f"Adding more campaigns at scale naturally dilutes average CTR — this is expected.")
+
+        render_insight_box('What happened this month', insight_items,
+                          box_type='warning' if (ctr_delta and ctr_delta < -10) else 'info')
+
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
         # ── Charts ────────────────────────────────────────────────────────────
         col1, col2 = st.columns(2)
+
         with col1:
-            st.subheader('CTR Trend (Month-over-Month)')
-            if 'All_Platform_CTR' in ov.columns:
-                fig = px.line(ov, x='period_label', y='All_Platform_CTR',
-                             markers=True,
-                             labels={'period_label': 'Month', 'All_Platform_CTR': 'CTR (%)'},
-                             color_discrete_sequence=['#4F46E5'])
-                fig.update_traces(line_width=3, marker_size=8)
-                fig.update_layout(height=320, margin=dict(t=20, b=20),
-                                 plot_bgcolor='#fafafa', paper_bgcolor='white')
+            st.markdown('<div class="section-header">CTR Trend (Month-over-Month)</div>', unsafe_allow_html=True)
+            if 'All_Platform_CTR' in ov.columns and len(ov) > 0:
+                # Find peak month for annotation
+                peak_idx  = ov['All_Platform_CTR'].idxmax()
+                peak_row  = ov.loc[peak_idx]
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=ov['period_label'],
+                    y=ov['All_Platform_CTR'],
+                    mode='lines+markers+text',
+                    text=[f"{v:.1f}%" for v in ov['All_Platform_CTR']],
+                    textposition='top center',
+                    textfont=dict(size=12, color='#4F46E5', family='sans-serif'),
+                    line=dict(color='#4F46E5', width=3),
+                    marker=dict(size=10, color='#4F46E5'),
+                    hovertemplate='%{x}<br>CTR: %{y:.2f}%<extra></extra>',
+                ))
+
+                # Annotate peak
+                if 'campaign_count' in ov.columns:
+                    peak_camps = int(peak_row.get('campaign_count', 0))
+                    fig.add_annotation(
+                        x=peak_row['period_label'], y=peak_row['All_Platform_CTR'],
+                        text=f"📌 Peak — {peak_camps:,} campaigns",
+                        showarrow=True, arrowhead=2, arrowcolor='#4F46E5',
+                        ax=40, ay=-40, font=dict(size=11, color='#1e40af'),
+                        bgcolor='#dbeafe', bordercolor='#93c5fd', borderwidth=1,
+                    )
+
+                fig.update_layout(
+                    height=340, margin=dict(t=30, b=30, l=10, r=10),
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    xaxis=dict(showgrid=False, tickfont=dict(size=12)),
+                    yaxis=dict(showgrid=True, gridcolor='#f1f5f9',
+                               title='CTR (%)', tickfont=dict(size=11)),
+                    showlegend=False,
+                )
                 st.plotly_chart(fig, use_container_width=True)
 
         with col2:
-            st.subheader('Campaigns Sent (Month-over-Month)')
+            st.markdown('<div class="section-header">Campaigns Sent (Month-over-Month)</div>', unsafe_allow_html=True)
             if 'All_Platform_Sent' in ov.columns:
-                fig2 = px.bar(ov, x='period_label', y='All_Platform_Sent',
-                             labels={'period_label': 'Month', 'All_Platform_Sent': 'Total Sent'},
-                             color_discrete_sequence=['#7C3AED'])
-                fig2.update_layout(height=320, margin=dict(t=20, b=20),
-                                  plot_bgcolor='#fafafa', paper_bgcolor='white')
+                bar_colours = ['#c7d2fe' if i < len(ov)-1 else '#4F46E5' for i in range(len(ov))]
+                fig2 = go.Figure(go.Bar(
+                    x=ov['period_label'],
+                    y=ov['All_Platform_Sent'],
+                    marker_color=bar_colours,
+                    text=[sent_fmt(v) for v in ov['All_Platform_Sent']],
+                    textposition='outside',
+                    textfont=dict(size=12),
+                    hovertemplate='%{x}<br>Sent: %{y:,.0f}<extra></extra>',
+                ))
+                fig2.update_layout(
+                    height=340, margin=dict(t=30, b=30, l=10, r=10),
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    xaxis=dict(showgrid=False, tickfont=dict(size=12)),
+                    yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(size=11)),
+                    showlegend=False,
+                )
                 st.plotly_chart(fig2, use_container_width=True)
 
-        # ── MOM Summary Table ─────────────────────────────────────────────────
-        st.subheader('Month-over-Month Summary')
-        display_cols = ['period_label', 'All_Platform_Sent', 'All_Platform_CTR',
-                        'primary_conversions', 'campaign_count',
-                        'mom_All_Platform_CTR_delta_pct', 'mom_All_Platform_Sent_delta_pct']
-        display_cols = [c for c in display_cols if c in ov.columns]
-
+        # ── MOM Table ─────────────────────────────────────────────────────────
+        st.markdown('<div class="section-header" style="margin-top:16px">Month-by-Month Breakdown</div>', unsafe_allow_html=True)
+        table_cols = ['period_label', 'campaign_count', 'All_Platform_Sent',
+                      'All_Platform_CTR', 'primary_conversions',
+                      'mom_All_Platform_CTR_delta_pct', 'mom_All_Platform_Sent_delta_pct']
+        table_cols = [c for c in table_cols if c in ov.columns]
+        tbl = ov[table_cols].copy()
         rename_map = {
             'period_label': 'Month',
+            'campaign_count': 'Campaigns',
             'All_Platform_Sent': 'Total Sent',
             'All_Platform_CTR': 'Avg CTR (%)',
             'primary_conversions': 'Conversions',
-            'campaign_count': 'Campaigns',
             'mom_All_Platform_CTR_delta_pct': 'CTR MOM Δ (%)',
             'mom_All_Platform_Sent_delta_pct': 'Volume MOM Δ (%)',
         }
-        st.dataframe(ov[display_cols].rename(columns=rename_map),
-                    use_container_width=True, hide_index=True)
+        tbl = tbl.rename(columns=rename_map)
+        if 'Total Sent' in tbl.columns:
+            tbl['Total Sent'] = tbl['Total Sent'].apply(lambda x: f'{x:,.0f}' if pd.notna(x) else '—')
+        if 'Conversions' in tbl.columns:
+            tbl['Conversions'] = tbl['Conversions'].apply(lambda x: f'{x:,.0f}' if pd.notna(x) else '—')
+        if 'Avg CTR (%)' in tbl.columns:
+            tbl['Avg CTR (%)'] = tbl['Avg CTR (%)'].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
+
+        # Colour CTR delta column
+        def colour_delta_cell(val):
+            try:
+                v = float(str(val).replace('%','').replace('+',''))
+                if v > 0: return 'color: #16a34a; font-weight: 600'
+                if v < 0: return 'color: #dc2626; font-weight: 600'
+            except: pass
+            return ''
+
+        styled_tbl = tbl.style.applymap(colour_delta_cell, subset=[c for c in ['CTR MOM Δ (%)', 'Volume MOM Δ (%)'] if c in tbl.columns])
+        st.dataframe(styled_tbl, use_container_width=True, hide_index=True)
+
+        # ── Next steps ────────────────────────────────────────────────────────
+        next_steps = []
+        if ctr_delta and ctr_delta < -15:
+            next_steps.append("🔍 **Investigate CTR drop:** Review May-June campaigns for copy quality issues — compare DO vs DON'T tonality split")
+        if len(ov) >= 2 and prev.get('campaign_count', 0) and (latest.get('campaign_count',0)/prev.get('campaign_count',1)) > 1.5:
+            next_steps.append("📊 **Volume vs Quality tradeoff:** Consider whether sending fewer, higher-quality campaigns could improve overall CTR")
+        next_steps.append("👉 **Go to Copy Intelligence** to see which copy styles are driving the best CTR")
+        next_steps.append("👉 **Go to BU Performance** to see which vertical needs attention this month")
+
+        render_insight_box('Recommended next steps', next_steps, box_type='success')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
