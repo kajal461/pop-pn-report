@@ -42,13 +42,33 @@ def _ensure_dataset(client: bigquery.Client, project_id: str) -> None:
         print(f'  -> Created dataset {BQ_DATASET}')
 
 
+def _sanitize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rename columns to be BigQuery-compatible.
+    BQ column names must match [a-zA-Z0-9_] and not start with a digit.
+    Replaces all other characters with underscores and collapses runs.
+    """
+    import re
+    new_cols = []
+    for col in df.columns:
+        safe = re.sub(r'[^a-zA-Z0-9_]', '_', str(col))  # replace bad chars
+        safe = re.sub(r'_+', '_', safe)                   # collapse runs
+        safe = safe.strip('_')                             # strip leading/trailing
+        if safe and safe[0].isdigit():
+            safe = 'col_' + safe                          # can't start with digit
+        new_cols.append(safe or 'unnamed')
+    df.columns = new_cols
+    return df
+
+
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Prepare DataFrame for BigQuery:
+    - Sanitize column names (no spaces, parens, commas)
     - Replace pandas NA/NaT/None with None (BigQuery-compatible NULL)
     - Convert non-serialisable types (Period, etc.) to string
     """
-    df = df.copy()
+    df = _sanitize_columns(df.copy())
     for col in df.columns:
         # Convert Period dtype columns to string
         if hasattr(df[col], 'dt') and hasattr(df[col].dt, 'to_period'):
