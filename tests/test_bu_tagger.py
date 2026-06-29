@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from src.bu_tagger import tag_bu
+from src.bu_tagger import tag_bu, _infer_bu_from_name
 from config import COL_TAG_POPCARD, COL_TAG_RUPAY, COL_TAG_UNCATEGORIZED, COL_TAG_SHOP
 
 def _row(popcard='[]', rupay='[]', uncategorized='[]', shop='[]'):
@@ -57,6 +57,59 @@ def test_nan_cells_return_unknown():
         'Tag Category: Rupay': float('nan'),
         'Tag Category: Uncategorized': float('nan'),
         'Tag Category: shop': float('nan'),
+    }])
+    result = tag_bu(df)
+    assert result.iloc[0]['bu'] == 'Unknown'
+
+
+# ── Campaign name fallback tests ──────────────────────────────────────────────
+
+def test_infer_bu_from_campaign_name_upi():
+    assert _infer_bu_from_name('UPI_3001_1') == 'UPI'
+
+def test_infer_bu_from_campaign_name_popcard():
+    assert _infer_bu_from_name('CARD_1001_1') == 'POPcard'
+
+def test_infer_bu_from_campaign_name_shop():
+    assert _infer_bu_from_name('SHOP_2001_1') == 'Shop'
+
+def test_infer_bu_from_campaign_name_credit_card():
+    """Credit_card_* campaigns (seen in real data) should map to POPcard."""
+    assert _infer_bu_from_name('Credit_card_0906_1') == 'POPcard'
+
+def test_infer_bu_from_campaign_name_rcbp():
+    """RCBP_* campaigns with empty tags should still resolve to RCBP."""
+    assert _infer_bu_from_name('RCBP_Credit_card_1006_1') == 'RCBP'
+
+def test_infer_bu_from_campaign_name_promo_shop():
+    """Promo_dotd_* = Deal of the Day, belongs to Shop BU."""
+    assert _infer_bu_from_name('Promo_dotd_0906_3') == 'Shop'
+
+def test_infer_bu_from_campaign_name_popcoin():
+    """POPcoin is a POPcard loyalty feature."""
+    assert _infer_bu_from_name('POPcoin_expiry31st_may') == 'POPcard'
+
+def test_infer_bu_fallback_used_when_no_tags():
+    """Campaign with no tags but UPI in name should get UPI BU."""
+    df = pd.DataFrame([{
+        'Tag Category: POPcard': '[]',
+        'Tag Category: Rupay': '[]',
+        'Tag Category: Uncategorized': '[]',
+        'Tag Category: shop': '[]',
+        'Campaign Name': 'UPI_9999_1',
+    }])
+    result = tag_bu(df)
+    assert result.iloc[0]['bu'] == 'UPI'
+    assert result.iloc[0]['is_multi_bu'] == False
+
+def test_unknown_remains_when_name_unrecognised():
+    """Campaign with no tags and unrecognised name prefix stays Unknown."""
+    df = pd.DataFrame([{
+        'Tag Category: POPcard': '[]',
+        'Tag Category: Rupay': '[]',
+        'Tag Category: Uncategorized': '[]',
+        'Tag Category: shop': '[]',
+        'Campaign Name': 'MISC_001',
     }])
     result = tag_bu(df)
     assert result.iloc[0]['bu'] == 'Unknown'

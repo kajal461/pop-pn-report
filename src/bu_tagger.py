@@ -2,8 +2,41 @@ import re
 import pandas as pd
 from config import (
     COL_TAG_POPCARD, COL_TAG_RUPAY, COL_TAG_UNCATEGORIZED, COL_TAG_SHOP,
+    COL_CAMPAIGN_NAME,
     BU_NAMED_TAGS, BU_UNCATEGORIZED,
 )
+
+# Campaign name prefix → BU mapping (fallback when all tag columns are empty).
+# Keys are uppercased first token before '_' in the campaign name.
+CAMPAIGN_NAME_BU_MAP = {
+    'UPI':      'UPI',
+    'PAYMENT':  'UPI',
+    'PAY':      'UPI',
+    'POPCARD':  'POPcard',
+    'CARD':     'POPcard',
+    'CC':       'POPcard',
+    'CREDIT':   'POPcard',   # Credit_card_* campaigns belong to POPcard BU
+    'POPCOIN':  'POPcard',   # POPcoin is a POPcard loyalty feature
+    'RUPAY':    'Rupay',
+    'RU':       'Rupay',
+    'RCBP':     'RCBP',
+    'SHOP':     'Shop',
+    'PROMO':    'Shop',      # Promo_dotd_* = Deal of the Day, Shop campaigns
+    'POPCHOP':  'POPchop',
+    'CHOP':     'POPchop',
+}
+
+
+def _infer_bu_from_name(campaign_name: str) -> str:
+    """
+    Infer BU from campaign name prefix when tags are empty.
+    e.g. 'UPI_3001_1' → 'UPI', 'Credit_card_0906_1' → 'POPcard'
+    Returns empty string if no match found.
+    """
+    if not isinstance(campaign_name, str) or not campaign_name.strip():
+        return ''
+    prefix = campaign_name.strip().split('_')[0].upper()
+    return CAMPAIGN_NAME_BU_MAP.get(prefix, '')
 
 
 def _parse_tag_list(value) -> list:
@@ -30,6 +63,11 @@ def _detect_bus(row: pd.Series) -> list:
         for tag in tags:
             if tag in BU_UNCATEGORIZED:
                 found.append(tag)
+    # Fallback: infer from campaign name prefix if tags are empty
+    if not found:
+        inferred = _infer_bu_from_name(str(row.get(COL_CAMPAIGN_NAME, '') or ''))
+        if inferred:
+            found.append(inferred)
     return found if found else ['Unknown']
 
 
