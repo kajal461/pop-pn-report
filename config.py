@@ -50,14 +50,55 @@ GOAL_CONVERTED_COLS  = [
 ]
 
 # ── Business unit configuration ───────────────────────────────────────────────
-BU_NAMED_TAGS = {
-    'POPcard': COL_TAG_POPCARD,
-    'Rupay':   COL_TAG_RUPAY,
-    'Shop':    COL_TAG_SHOP,
+# TAG_VALUE_TO_BU: maps specific tag VALUES to BU labels.
+# This replaces the old presence-based BU_NAMED_TAGS approach.
+# Each tag column is scanned; every matching value maps to a specific BU.
+TAG_VALUE_TO_BU = {
+    # From Tag Category: POPcard
+    'POPcard_apply_now': 'POPcard - Acquisition',
+    'POPcard_txn':       'POPcard - Activation',
+    # From Tag Category: Rupay
+    'Rupay_txn':         'Rupay - Activation',
+    'Rupay_linking':     'Rupay - Acquisition',
+    # From Tag Category: shop (shop AND POPchop both live here)
+    'shop':                      'Shop',
+    'POPchop':                   'POPchop',
+    'POPchop_mandate_done':      'POPchop',  # consolidated
+    'POPchop_mandate_not_done':  'POPchop',  # consolidated
+    # From Tag Category: Uncategorized
+    'UPI':     'UPI',
+    'RCBP':    'RCBP',
 }
-# BUs that live inside the Uncategorized tag column (no dedicated tag category in MoEngage)
-BU_UNCATEGORIZED = ['UPI', 'RCBP', 'POPchop']
-ALL_BUS = ['UPI', 'POPcard', 'Rupay', 'Shop', 'RCBP', 'POPchop']
+
+ALL_BUS = [
+    'UPI', 'RCBP', 'Shop', 'POPchop',
+    'POPcard - Acquisition', 'POPcard - Activation',
+    'Rupay - Activation', 'Rupay - Acquisition',
+]
+
+# Tag columns to scan (all 4 MoEngage tag categories)
+ALL_TAG_COLS = [
+    COL_TAG_POPCARD, COL_TAG_RUPAY, COL_TAG_UNCATEGORIZED, COL_TAG_SHOP,
+]
+
+# Campaign name prefix → BU fallback for untagged campaigns
+# For CREDIT prefix: use deeplink to distinguish Acquisition vs Activation
+CAMPAIGN_NAME_BU_MAP = {
+    'UPI':      'UPI',
+    'PAYMENT':  'UPI',
+    'PAY':      'UPI',
+    'RCBP':     'RCBP',
+    'PROMO':    'Shop',
+    'SHOP':     'Shop',
+    'POPCHOP':  'POPchop',
+    'CHOP':     'POPchop',
+    # CREDIT is ambiguous (could be POPcard Acquisition or Activation)
+    # — resolved via deeplink in bu_tagger.py
+}
+
+# Deeplink signals for CREDIT campaigns (untagged)
+CREDIT_ACQUISITION_DEEPLINK_SIGNALS = ['apply', 'apply_now']
+CREDIT_ACTIVATION_DEEPLINK_SIGNALS  = ['rupay', 'linking', 'ntu', 'cashback', 'popcoins', 'ybl', 'CC_PN_POP']
 
 # ── Time configuration ────────────────────────────────────────────────────────
 TIME_SLOTS = [

@@ -1,115 +1,131 @@
+# tests/test_bu_tagger.py
 import pandas as pd
+import numpy as np
 import pytest
-from src.bu_tagger import tag_bu, _infer_bu_from_name
 from config import COL_TAG_POPCARD, COL_TAG_RUPAY, COL_TAG_UNCATEGORIZED, COL_TAG_SHOP
+from src.bu_tagger import tag_bu, _parse_tag_list, _infer_bu_from_name_and_deeplink
 
-def _row(popcard='[]', rupay='[]', uncategorized='[]', shop='[]'):
-    return pd.DataFrame([{
-        COL_TAG_POPCARD: popcard,
-        COL_TAG_RUPAY: rupay,
-        COL_TAG_UNCATEGORIZED: uncategorized,
-        COL_TAG_SHOP: shop,
-    }])
+def _row(**kwargs):
+    base = {
+        COL_TAG_POPCARD: '[]',
+        COL_TAG_RUPAY: '[]',
+        COL_TAG_UNCATEGORIZED: '[]',
+        COL_TAG_SHOP: '[]',
+        'Campaign Name': '',
+        'Android Default Button screen name/Deeplinking URL/Richlanding URL': '',
+    }
+    base.update(kwargs)
+    return pd.DataFrame([base])
 
+# ── Tag parsing ───────────────────────────────────────────────────────────────
+def test_parse_tag_list_standard():
+    assert _parse_tag_list("['UPI']") == ['UPI']
+
+def test_parse_tag_list_empty():
+    assert _parse_tag_list('[]') == []
+
+def test_parse_tag_list_nan():
+    assert _parse_tag_list(float('nan')) == []
+
+def test_parse_tag_list_multi():
+    assert _parse_tag_list("['POPchop', 'POPchop_mandate_done']") == ['POPchop', 'POPchop_mandate_done']
+
+# ── POPcard sub-types ─────────────────────────────────────────────────────────
+def test_popcard_acquisition():
+    df = tag_bu(_row(**{COL_TAG_POPCARD: "['POPcard_apply_now']"}))
+    assert df.iloc[0]['bu'] == 'POPcard - Acquisition'
+
+def test_popcard_activation():
+    df = tag_bu(_row(**{COL_TAG_POPCARD: "['POPcard_txn']"}))
+    assert df.iloc[0]['bu'] == 'POPcard - Activation'
+
+# ── Rupay sub-types ───────────────────────────────────────────────────────────
+def test_rupay_activation():
+    df = tag_bu(_row(**{COL_TAG_RUPAY: "['Rupay_txn']"}))
+    assert df.iloc[0]['bu'] == 'Rupay - Activation'
+
+def test_rupay_acquisition():
+    df = tag_bu(_row(**{COL_TAG_RUPAY: "['Rupay_linking']"}))
+    assert df.iloc[0]['bu'] == 'Rupay - Acquisition'
+
+# ── Shop ──────────────────────────────────────────────────────────────────────
+def test_shop_from_shop_tag():
+    df = tag_bu(_row(**{COL_TAG_SHOP: "['shop']"}))
+    assert df.iloc[0]['bu'] == 'Shop'
+
+# ── POPchop consolidation ─────────────────────────────────────────────────────
+def test_popchop_base_tag():
+    df = tag_bu(_row(**{COL_TAG_SHOP: "['POPchop']"}))
+    assert df.iloc[0]['bu'] == 'POPchop'
+
+def test_popchop_mandate_done_consolidates():
+    df = tag_bu(_row(**{COL_TAG_SHOP: "['POPchop_mandate_done']"}))
+    assert df.iloc[0]['bu'] == 'POPchop'
+
+def test_popchop_mandate_not_done_consolidates():
+    df = tag_bu(_row(**{COL_TAG_SHOP: "['POPchop_mandate_not_done']"}))
+    assert df.iloc[0]['bu'] == 'POPchop'
+
+def test_popchop_dual_tag_gives_single_row():
+    """Dual-tagged POPchop campaigns must produce exactly ONE row, not two."""
+    df = tag_bu(_row(**{COL_TAG_SHOP: "['POPchop', 'POPchop_mandate_done']"}))
+    assert len(df) == 1
+    assert df.iloc[0]['bu'] == 'POPchop'
+    assert df.iloc[0]['is_multi_bu'] == False
+
+# ── UPI and RCBP ─────────────────────────────────────────────────────────────
 def test_upi_from_uncategorized():
-    df = tag_bu(_row(uncategorized="['UPI']"))
+    df = tag_bu(_row(**{COL_TAG_UNCATEGORIZED: "['UPI']"}))
     assert df.iloc[0]['bu'] == 'UPI'
 
 def test_rcbp_from_uncategorized():
-    df = tag_bu(_row(uncategorized="['RCBP']"))
+    df = tag_bu(_row(**{COL_TAG_UNCATEGORIZED: "['RCBP']"}))
     assert df.iloc[0]['bu'] == 'RCBP'
 
-def test_popchop_from_uncategorized():
-    df = tag_bu(_row(uncategorized="['POPchop']"))
-    assert df.iloc[0]['bu'] == 'POPchop'
-
-def test_popcard_from_named_tag():
-    df = tag_bu(_row(popcard="['POPcard']"))
-    assert df.iloc[0]['bu'] == 'POPcard'
-
-def test_rupay_from_named_tag():
-    df = tag_bu(_row(rupay="['Rupay']"))
-    assert df.iloc[0]['bu'] == 'Rupay'
-
-def test_shop_from_named_tag():
-    df = tag_bu(_row(shop="['Electronics']"))
-    assert df.iloc[0]['bu'] == 'Shop'
-
-def test_multi_bu_duplicates_rows():
-    df = tag_bu(_row(popcard="['POPcard']", uncategorized="['UPI']"))
+# ── Multi-BU (genuine) ────────────────────────────────────────────────────────
+def test_genuine_multi_bu_duplicates_rows():
+    df = tag_bu(_row(**{COL_TAG_POPCARD: "['POPcard_txn']", COL_TAG_UNCATEGORIZED: "['UPI']"}))
     assert len(df) == 2
-    assert set(df['bu'].tolist()) == {'POPcard', 'UPI'}
+    assert set(df['bu'].tolist()) == {'POPcard - Activation', 'UPI'}
     assert all(df['is_multi_bu'])
 
-def test_unknown_tag_returns_unknown():
-    df = tag_bu(_row())
+# ── Fallback: campaign name ───────────────────────────────────────────────────
+def test_untagged_upi_inferred_from_name():
+    df = tag_bu(_row(**{'Campaign Name': 'UPI_9999_1'}))
+    assert df.iloc[0]['bu'] == 'UPI'
+
+def test_untagged_rcbp_inferred_from_name():
+    df = tag_bu(_row(**{'Campaign Name': 'RCBP_2001_1'}))
+    assert df.iloc[0]['bu'] == 'RCBP'
+
+def test_untagged_shop_promo_inferred_from_name():
+    df = tag_bu(_row(**{'Campaign Name': 'PROMO_dotd_0106_1'}))
+    assert df.iloc[0]['bu'] == 'Shop'
+
+def test_credit_apply_deeplink_gives_acquisition():
+    df = tag_bu(_row(**{
+        'Campaign Name': 'Credit_card_0106_1',
+        'Android Default Button screen name/Deeplinking URL/Richlanding URL': 'https://dl.popclub.co/CC_pn_apply_now',
+    }))
+    assert df.iloc[0]['bu'] == 'POPcard - Acquisition'
+
+def test_credit_rupay_deeplink_gives_activation():
+    df = tag_bu(_row(**{
+        'Campaign Name': 'Credit_card_0106_1',
+        'Android Default Button screen name/Deeplinking URL/Richlanding URL': 'https://dl.popclub.co/CC_PN_RuPay_linking_new_app',
+    }))
+    assert df.iloc[0]['bu'] == 'POPcard - Activation'
+
+def test_unknown_remains_for_unrecognised():
+    df = tag_bu(_row(**{'Campaign Name': 'MISC_001'}))
     assert df.iloc[0]['bu'] == 'Unknown'
 
-def test_is_multi_bu_false_for_single_bu():
-    df = tag_bu(_row(uncategorized="['UPI']"))
-    assert df.iloc[0]['is_multi_bu'] == False
-
 def test_nan_cells_return_unknown():
-    """Real MoEngage CSVs can have float NaN in tag cells — must return Unknown."""
-    import numpy as np
     df = pd.DataFrame([{
-        'Tag Category: POPcard': float('nan'),
-        'Tag Category: Rupay': float('nan'),
-        'Tag Category: Uncategorized': float('nan'),
-        'Tag Category: shop': float('nan'),
-    }])
-    result = tag_bu(df)
-    assert result.iloc[0]['bu'] == 'Unknown'
-
-
-# ── Campaign name fallback tests ──────────────────────────────────────────────
-
-def test_infer_bu_from_campaign_name_upi():
-    assert _infer_bu_from_name('UPI_3001_1') == 'UPI'
-
-def test_infer_bu_from_campaign_name_popcard():
-    assert _infer_bu_from_name('CARD_1001_1') == 'POPcard'
-
-def test_infer_bu_from_campaign_name_shop():
-    assert _infer_bu_from_name('SHOP_2001_1') == 'Shop'
-
-def test_infer_bu_from_campaign_name_credit_card():
-    """Credit_card_* campaigns (seen in real data) should map to POPcard."""
-    assert _infer_bu_from_name('Credit_card_0906_1') == 'POPcard'
-
-def test_infer_bu_from_campaign_name_rcbp():
-    """RCBP_* campaigns with empty tags should still resolve to RCBP."""
-    assert _infer_bu_from_name('RCBP_Credit_card_1006_1') == 'RCBP'
-
-def test_infer_bu_from_campaign_name_promo_shop():
-    """Promo_dotd_* = Deal of the Day, belongs to Shop BU."""
-    assert _infer_bu_from_name('Promo_dotd_0906_3') == 'Shop'
-
-def test_infer_bu_from_campaign_name_popcoin():
-    """POPcoin is a POPcard loyalty feature."""
-    assert _infer_bu_from_name('POPcoin_expiry31st_may') == 'POPcard'
-
-def test_infer_bu_fallback_used_when_no_tags():
-    """Campaign with no tags but UPI in name should get UPI BU."""
-    df = pd.DataFrame([{
-        'Tag Category: POPcard': '[]',
-        'Tag Category: Rupay': '[]',
-        'Tag Category: Uncategorized': '[]',
-        'Tag Category: shop': '[]',
-        'Campaign Name': 'UPI_9999_1',
-    }])
-    result = tag_bu(df)
-    assert result.iloc[0]['bu'] == 'UPI'
-    assert result.iloc[0]['is_multi_bu'] == False
-
-def test_unknown_remains_when_name_unrecognised():
-    """Campaign with no tags and unrecognised name prefix stays Unknown."""
-    df = pd.DataFrame([{
-        'Tag Category: POPcard': '[]',
-        'Tag Category: Rupay': '[]',
-        'Tag Category: Uncategorized': '[]',
-        'Tag Category: shop': '[]',
-        'Campaign Name': 'MISC_001',
+        COL_TAG_POPCARD: float('nan'), COL_TAG_RUPAY: float('nan'),
+        COL_TAG_UNCATEGORIZED: float('nan'), COL_TAG_SHOP: float('nan'),
+        'Campaign Name': float('nan'),
+        'Android Default Button screen name/Deeplinking URL/Richlanding URL': float('nan'),
     }])
     result = tag_bu(df)
     assert result.iloc[0]['bu'] == 'Unknown'

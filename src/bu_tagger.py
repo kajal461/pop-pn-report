@@ -1,42 +1,14 @@
+# src/bu_tagger.py
 import re
 import pandas as pd
 from config import (
-    COL_TAG_POPCARD, COL_TAG_RUPAY, COL_TAG_UNCATEGORIZED, COL_TAG_SHOP,
+    TAG_VALUE_TO_BU, ALL_TAG_COLS, CAMPAIGN_NAME_BU_MAP,
+    CREDIT_ACQUISITION_DEEPLINK_SIGNALS, CREDIT_ACTIVATION_DEEPLINK_SIGNALS,
     COL_CAMPAIGN_NAME,
-    BU_NAMED_TAGS, BU_UNCATEGORIZED,
 )
 
-# Campaign name prefix → BU mapping (fallback when all tag columns are empty).
-# Keys are uppercased first token before '_' in the campaign name.
-CAMPAIGN_NAME_BU_MAP = {
-    'UPI':      'UPI',
-    'PAYMENT':  'UPI',
-    'PAY':      'UPI',
-    'POPCARD':  'POPcard',
-    'CARD':     'POPcard',
-    'CC':       'POPcard',
-    'CREDIT':   'POPcard',   # Credit_card_* campaigns belong to POPcard BU
-    'POPCOIN':  'POPcard',   # POPcoin is a POPcard loyalty feature
-    'RUPAY':    'Rupay',
-    'RU':       'Rupay',
-    'RCBP':     'RCBP',
-    'SHOP':     'Shop',
-    'PROMO':    'Shop',      # Promo_dotd_* = Deal of the Day, Shop campaigns
-    'POPCHOP':  'POPchop',
-    'CHOP':     'POPchop',
-}
-
-
-def _infer_bu_from_name(campaign_name: str) -> str:
-    """
-    Infer BU from campaign name prefix when tags are empty.
-    e.g. 'UPI_3001_1' → 'UPI', 'Credit_card_0906_1' → 'POPcard'
-    Returns empty string if no match found.
-    """
-    if not isinstance(campaign_name, str) or not campaign_name.strip():
-        return ''
-    prefix = campaign_name.strip().split('_')[0].upper()
-    return CAMPAIGN_NAME_BU_MAP.get(prefix, '')
+# Deeplink column name in MoEngage export
+_DEEPLINK_COL = 'Android Default Button screen name/Deeplinking URL/Richlanding URL'
 
 
 def _parse_tag_list(value) -> list:
@@ -44,43 +16,77 @@ def _parse_tag_list(value) -> list:
     Handles float NaN, None, and empty/invalid strings safely.
     """
     if not isinstance(value, str):
-        return []          # handles float NaN, None, int, etc.
+        return []
     if value.strip() in ('[]', '', 'nan'):
         return []
     return re.findall(r"'([^']+)'", value)
 
 
+def _infer_bu_from_name_and_deeplink(row: pd.Series) -> str:
+    """
+    Fallback BU inference for untagged campaigns.
+    1. Try campaign name prefix against CAMPAIGN_NAME_BU_MAP.
+    2. For CREDIT prefix (ambiguous), use deeplink to distinguish
+       POPcard Acquisition vs Activation.
+    3. Return empty string if nothing matches.
+    """
+    name = str(row.get(COL_CAMPAIGN_NAME, '') or '')
+    prefix = name.strip().split('_')[0].upper() if name.strip() else ''
+
+    if prefix == 'CREDIT' or prefix == 'POPCOIN':
+        # CREDIT campaigns need deeplink disambiguation
+        deeplink = str(row.get(_DEEPLINK_COL, '') or '').lower()
+        if any(sig in deeplink for sig in CREDIT_ACQUISITION_DEEPLINK_SIGNALS):
+            return 'POPcard - Acquisition'
+        if any(sig in deeplink for sig in CREDIT_ACTIVATION_DEEPLINK_SIGNALS):
+            # Could be Rupay or POPcard activation — use tag to distinguish,
+            # but since we're in the untagged path, default to POPcard - Activation
+            return 'POPcard - Activation'
+        # No deeplink signal — default to POPcard - Activation (majority case)
+        return 'POPcard - Activation'
+
+    return CAMPAIGN_NAME_BU_MAP.get(prefix, '')
+
+
 def _detect_bus(row: pd.Series) -> list:
-    """Return all BU names detected for a single row."""
-    found = []
-    # Named tag categories (POPcard, Rupay, Shop)
-    for bu_name, col in BU_NAMED_TAGS.items():
-        if col in row.index and _parse_tag_list(row[col]):
-            found.append(bu_name)
-    # Uncategorized tag column (UPI, RCBP, POPchop)
-    if COL_TAG_UNCATEGORIZED in row.index:
-        tags = _parse_tag_list(row[COL_TAG_UNCATEGORIZED])
+    """Return all BU labels detected for a single row (deduplicated)."""
+    found_set = set()
+    found_order = []
+
+    # Scan all 4 tag columns, look up each tag value in TAG_VALUE_TO_BU
+    for col in ALL_TAG_COLS:
+        if col not in row.index:
+            continue
+        tags = _parse_tag_list(row[col])
         for tag in tags:
-            if tag in BU_UNCATEGORIZED:
-                found.append(tag)
-    # Fallback: infer from campaign name prefix if tags are empty
-    if not found:
-        inferred = _infer_bu_from_name(str(row.get(COL_CAMPAIGN_NAME, '') or ''))
+            bu = TAG_VALUE_TO_BU.get(tag)
+            if bu and bu not in found_set:
+                found_set.add(bu)
+                found_order.append(bu)
+
+    # Fallback: infer from campaign name + deeplink if no tags matched
+    if not found_order:
+        inferred = _infer_bu_from_name_and_deeplink(row)
         if inferred:
-            found.append(inferred)
-    return found if found else ['Unknown']
+            found_order.append(inferred)
+
+    return found_order if found_order else ['Unknown']
 
 
 def tag_bu(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add 'bu' and 'is_multi_bu' columns.
     Multi-BU rows are duplicated (one row per BU) with is_multi_bu=True.
+    POPchop dual-tags are deduplicated to a single 'POPchop' row.
     """
     rows = []
     for _, row in df.iterrows():
         bus = _detect_bus(row)
-        is_multi = len(bus) > 1
-        for bu in bus:
+        # Deduplicate while preserving order (handles POPchop dual-tags → single row)
+        seen = set()
+        unique_bus = [b for b in bus if not (b in seen or seen.add(b))]
+        is_multi = len(unique_bus) > 1
+        for bu in unique_bus:
             new_row = row.copy()
             new_row['bu'] = bu
             new_row['is_multi_bu'] = is_multi
