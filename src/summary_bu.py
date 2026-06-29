@@ -4,7 +4,7 @@ from config import COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, COL_ALL_CT
 
 METRIC_COLS = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
                COL_ALL_CTR, 'primary_conversions', 'end_to_end_funnel_rate',
-               'reachability_rate', COL_ALL_FCM_RATE]
+               'click_to_convert_rate', 'reachability_rate', COL_ALL_FCM_RATE]
 SUM_COLS = {COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, 'primary_conversions'}
 
 
@@ -15,6 +15,11 @@ def _aggregate(master: pd.DataFrame, period_col: str) -> pd.DataFrame:
     }
     agg_dict['campaign_count'] = ('Campaign ID', 'nunique')
     agg_dict['ab_test_count']  = ('is_ab_test', 'sum')
+    if 'conversion_tracked' in master.columns:
+        agg_dict['tracked_campaigns']      = ('conversion_tracked', 'sum')
+        agg_dict['avg_click_to_convert']   = ('click_to_convert_rate', 'mean')
+    if 'primary_conversions' in master.columns:
+        agg_dict['total_conversions']      = ('primary_conversions', 'sum')
     return (
         master.groupby(['bu', period_col])
         .agg(**agg_dict)

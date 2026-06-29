@@ -3,8 +3,8 @@ import pandas as pd
 from config import COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, COL_ALL_CTR, COL_ALL_FCM_RATE
 
 METRIC_COLS = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
-               COL_ALL_CTR, 'primary_conversions', 'end_to_end_funnel_rate',
-               'reachability_rate', COL_ALL_FCM_RATE]
+               COL_ALL_CTR, 'primary_conversions', 'click_to_convert_rate',
+               'end_to_end_funnel_rate', 'reachability_rate', COL_ALL_FCM_RATE]
 SUM_COLS = {COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, 'primary_conversions'}
 
 

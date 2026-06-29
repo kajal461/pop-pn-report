@@ -11,6 +11,7 @@ OUTPUT_COLS = [
     COL_ANDROID_TITLE, COL_ANDROID_BODY,
     'tonality', 'brand_compliant',
     COL_ALL_SENT, COL_ALL_CTR, 'primary_conversions',
+    'conversion_event', 'conversion_tracked',
     COL_ALL_CLICKS, COL_ALL_IMPRESSIONS, COL_ALL_UPLIFT,
     'rank', 'rank_type',
 ]

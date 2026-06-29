@@ -100,6 +100,36 @@ CAMPAIGN_NAME_BU_MAP = {
 CREDIT_ACQUISITION_DEEPLINK_SIGNALS = ['apply', 'apply_now']
 CREDIT_ACTIVATION_DEEPLINK_SIGNALS  = ['rupay', 'linking', 'ntu', 'cashback', 'popcoins', 'ybl', 'CC_PN_POP']
 
+# ── BU-specific conversion event mapping ─────────────────────────────────────
+# Each BU tracks a different MoEngage event as its "true conversion".
+# The pipeline scans Goal 1-5 events to find the right one per campaign.
+BU_CONVERSION_GOAL_EVENTS = {
+    'Shop':                   'ORDER_STATUS_UPDATED',
+    'RCBP':                   'TRANSACTION_STATUS_PAGE_RCBP',
+    'UPI':                    'UPI_TRANSACTION_STATUS',
+    'POPcard - Acquisition':  'UPI_LINKED_CREDITCARD',
+    'POPcard - Activation':   'UPI_TRANSACTION_STATUS',
+    'Rupay - Acquisition':    'UPI_LINKED_CREDITCARD',
+    'Rupay - Activation':     'UPI_TRANSACTION_STATUS',
+    'POPchop':                'MANDATE_SETUP_SHOP',
+}
+
+# Human-readable labels for conversion events (used in dashboard tooltips)
+CONVERSION_EVENT_LABELS = {
+    'ORDER_STATUS_UPDATED':            'Purchase completed',
+    'TRANSACTION_STATUS_PAGE_RCBP':    'Bill payment done',
+    'UPI_TRANSACTION_STATUS':          'UPI/card transaction',
+    'UPI_LINKED_CREDITCARD':           'Card linked/applied',
+    'MANDATE_SETUP_SHOP':              'Mandate set up',
+    'PAGE_VIEWED_SHOP':                'Shop page viewed (not a purchase)',
+}
+
+# Conversion goal columns in MoEngage export
+GOAL_EVENT_COLS = [f'Conversion Goal {i} Event' for i in range(1, 6)]
+GOAL_COUNT_COLS = [
+    f'Goal {i} Click Through Converted Users All Platform' for i in range(1, 6)
+]
+
 # ── Time configuration ────────────────────────────────────────────────────────
 TIME_SLOTS = [
     ('Dawn',    4,  7),
