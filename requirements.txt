@@ -4,3 +4,4 @@ gspread-dataframe==4.0.0
 emoji==2.12.1
 python-dotenv==1.0.1
 pytest==8.2.2
+google-cloud-bigquery[pandas]==3.25.0

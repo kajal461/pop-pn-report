@@ -141,3 +141,7 @@ DO_PRIORITY = [
 MIN_SENT_THRESHOLD = 500   # minimum All Platform Sent to be included in Top/Bottom ranking
 TOP_N = 5                  # number of campaigns shown in top and bottom ranking tables
 LECTURE_MAX_WORDS = 30     # body word count above this threshold signals a Lecture-y PN
+
+# ── BigQuery output configuration ─────────────────────────────────────────────
+BQ_DATASET = 'pn_report'   # BigQuery dataset name — created automatically on first run
+BQ_LOCATION = 'US'         # Dataset location — change to 'asia-south1' if needed
