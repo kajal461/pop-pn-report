@@ -461,6 +461,7 @@ page = st.sidebar.radio('Navigate', [
     '🏆 Top & Bottom Campaigns',
     '🧪 A/B Testing Hub',
     '⏰ Timing & Frequency',
+    '📦 Segment Intelligence',
 ])
 
 all_bus = sorted(master['bu'].dropna().unique().tolist()) if 'bu' in master.columns else []
@@ -2558,3 +2559,478 @@ elif page == '⏰ Timing & Frequency':
         f"💰 **Payday calendar:** {payday_action_text}",
         f"🧪 **Test timing** — run the same campaign on {best_day_str} vs Sunday to confirm your BU-specific timing patterns",
     ], box_type='success')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 8 — SEGMENT INTELLIGENCE
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == '📦 Segment Intelligence':
+    import re as _re
+
+    st.markdown("## 📦 Segment Intelligence")
+    st.caption("How targeting approach affects PN performance — broadcast vs. custom segments vs. behavioral targeting")
+
+    # ── Segment type parser ──────────────────────────────────────────────────
+    def _parse_segment_type(filters):
+        """Return (segment_type, primary_segment_name) from MoEngage filter string."""
+        if pd.isna(filters) or str(filters).strip() in ('', 'nan'):
+            return 'Unknown', 'Unknown'
+        f = str(filters).strip()
+        if 'allusers' in f.lower() or f.lower() == 'all users':
+            return 'Broadcast', 'All Users'
+        if 'Users in custom segment:' in f:
+            match = _re.search(r'Users in custom segment:\s*([^\s<\+]+)', f)
+            name = match.group(1).strip() if match else f[:50]
+            # Strip trailing HTML artifacts
+            name = _re.sub(r'<.*', '', name).strip()
+            return 'Custom Segment', name
+        if 'Has executed' in f or 'PAGE_VIEWED' in f or 'UPI_TRANSACTION' in f:
+            return 'Behavioral', f[:60]
+        if 'COIN_BALANCE' in f or 'IS_FIRST' in f or 'INSTRUMENT_TYPE' in f or 'CARD_STATUS' in f:
+            return 'Attribute-based', f[:60]
+        return 'Other', f[:60]
+
+    # ── Readable segment name mapping ────────────────────────────────────────
+    SEGMENT_LABELS = {
+        'overall_popcard_users':       'POPcard Users',
+        'Overall_rupay_card_users':    'RuPay Card Users',
+        'Elite_users_exclusion':       'Elite Users (excl. card)',
+        'UPI_D-1_NTU':                 'UPI Day-1 New Users',
+        'BPC_Premium':                 'Premium BPC Users',
+        'Shoppers_2811':               'Active Shoppers',
+        'UPI_50rs_CB':                 'UPI ₹50 Cashback Segment',
+        'UPI_noncard_ntu':             'UPI Non-card NTU',
+        'UPI_noncard_mtu':             'UPI Non-card MTU',
+        'UPI_M1_0805':                 'UPI Month-1 Users',
+        'UPI_M1':                      'UPI Month-1 Users',
+        'UPI_Test_Segment':            'UPI Test Segment',
+        'rupay_ntu':                   'RuPay NTU',
+        'rupay_mtu':                   'RuPay MTU',
+        'POPcard_NTU':                 'POPcard NTU',
+        'POPcard_MTU':                 'POPcard MTU',
+        'POPcard_linked_no_txn':       'POPcard Linked (no txn)',
+        'POPcard_17k_1704':            'POPcard ₹17k Segment',
+        'RCBP_2nd_txn_2004':           'RCBP 2nd Txn Segment',
+        'RCBP_Popcard_Lesser2500':     'RCBP POPcard <₹2500',
+        'RCBP_Popcard_Greater2500':    'RCBP POPcard >₹2500',
+        'RCBP_1st_txn_1704':           'RCBP 1st Txn Segment',
+        'RCBP_3004_other_card_users':  'RCBP Other Card Users',
+        'Mid_Premium_Overall':         'Mid-Premium Users',
+        'Tier3_Overall':               'Tier-3 Users',
+        'BPC_Regular':                 'Regular BPC Users',
+        'Shop_ads':                    'Shop Ads Audience',
+        'Shoppers_2811':               'Active Shoppers',
+        'exclude_Shop_AB_testing':     'Shop A/B Excl. Audience',
+        'POPchop_mandate_complete':    'POPchop Mandate Complete',
+        'POPchop_mandate_incomplete':  'POPchop Mandate Pending',
+        'Rupay_NTU-30days_0805':       'RuPay NTU (30-day)',
+        'Rupay_M1-30Days_0805':        'RuPay M1 (30-day)',
+        'Rupay_linking_16_to_31':      'RuPay Linking 16-31',
+        'Rupay_non_m1':                'RuPay Non-M1',
+        'Fashion_All':                 'Fashion Users',
+        'Food_Overall':                'Food Users',
+        'Bills':                       'Bills Users',
+        'Overall_Card_Users':          'Overall Card Users',
+        'card':                        'Card Users',
+        'UPI_linking_F15_days':        'UPI Linking First 15 Days',
+        'coins_expiry_0206':           'Coins Expiry Segment',
+        'mirza_ads_rcbp_0805':         'Mirza Ads RCBP',
+        'UPI_GOLD_0505':               'UPI Gold Segment',
+        'UPI_5to8pm_0606':             'UPI 5-8PM Segment',
+        'UPI_15txn_flat50cashback':    'UPI 15-txn ₹50 Cashback',
+        'POPcard_users_no_txn_L3d':    'POPcard No-txn (3d)',
+        'UPI_ndmt1txn_last3d_1206':    'UPI No-txn (3d)',
+        'rupay_users_no_txn_L3d':      'RuPay No-txn (3d)',
+        'upi_noncard_mtu_lessThan30txn': 'UPI Non-card MTU (<30 txn)',
+        'UPIxSHOP__2505':              'UPI×Shop Segment',
+        'Shop_38k_2406':               'Shop 38k Segment',
+        'Coins_expiry_0206_final':     'Coins Expiry Final',
+        'POPcard_NTU_2811':            'POPcard NTU (Nov)',
+        'rupay_ntu_2811':              'RuPay NTU (Nov)',
+        'UPI_noncard_may_h1_no_txn_after': 'UPI Non-card May H1 No-txn',
+        'mirza_ads_rcbp_0805':         'Mirza Ads RCBP',
+        'Shop_ads':                    'Shop Ads Audience',
+    }
+
+    def _clean_segment_name(raw_name):
+        """Strip trailing HTML junk and map to human-readable label."""
+        name = _re.sub(r'<.*', '', str(raw_name)).strip().rstrip('<').strip()
+        name = name.strip(')')
+        return SEGMENT_LABELS.get(name, name.replace('_', ' ').replace('-', ' '))
+
+    # ── Prepare segment data ──────────────────────────────────────────────────
+    seg_df = filtered_master.copy()
+    seg_df = seg_df[seg_df['All_Platform_Sent'].fillna(0) > 0].copy()
+
+    for col in ['All_Platform_CTR', 'All_Platform_Sent', 'primary_conversions',
+                'All_Platform_Installed_Users_in_segment', 'reachability_rate']:
+        if col in seg_df.columns:
+            seg_df[col] = pd.to_numeric(seg_df[col], errors='coerce').fillna(0)
+
+    if 'Custom_Segment_Filters' not in seg_df.columns:
+        st.warning("Custom_Segment_Filters column not found in data. Please refresh the data.")
+        st.stop()
+
+    parsed = seg_df['Custom_Segment_Filters'].apply(lambda x: pd.Series(_parse_segment_type(x)))
+    seg_df['_seg_type'] = parsed[0]
+    seg_df['_seg_raw'] = parsed[1]
+    seg_df['_seg_label'] = seg_df['_seg_raw'].apply(_clean_segment_name)
+
+    total_rows = len(seg_df)
+
+    # ── Section A: Overview cards ─────────────────────────────────────────────
+    st.markdown("### Overview")
+
+    broadcast_df = seg_df[seg_df['_seg_type'] == 'Broadcast']
+    custom_df    = seg_df[seg_df['_seg_type'] == 'Custom Segment']
+    behavioral_df = seg_df[seg_df['_seg_type'] == 'Behavioral']
+
+    n_unique_segments = seg_df[seg_df['_seg_type'] == 'Custom Segment']['_seg_raw'].nunique()
+    pct_targeted = round(100 * len(custom_df) / total_rows, 1) if total_rows > 0 else 0
+    pct_broadcast = round(100 * len(broadcast_df) / total_rows, 1) if total_rows > 0 else 0
+
+    # Best performing type by avg CTR
+    type_perf = seg_df.groupby('_seg_type')['All_Platform_CTR'].mean()
+    best_type = type_perf.idxmax() if not type_perf.empty else 'Custom Segment'
+    best_type_ctr = type_perf.max() if not type_perf.empty else 0
+
+    broadcast_ctr = broadcast_df['All_Platform_CTR'].mean() if len(broadcast_df) > 0 else 0
+    custom_ctr = custom_df['All_Platform_CTR'].mean() if len(custom_df) > 0 else 0
+    ctr_lift = round(((custom_ctr - broadcast_ctr) / broadcast_ctr) * 100, 1) if broadcast_ctr > 0 else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Unique Segments Used", f"{n_unique_segments}")
+    with c2:
+        st.metric("Custom Segment Campaigns", f"{pct_targeted}%", f"{len(custom_df):,} campaigns")
+    with c3:
+        st.metric("Broadcast Campaigns", f"{pct_broadcast}%", f"{len(broadcast_df):,} campaigns")
+    with c4:
+        lift_label = f"+{ctr_lift}% vs broadcast" if ctr_lift >= 0 else f"{ctr_lift}% vs broadcast"
+        st.metric("Custom Seg Avg CTR", f"{custom_ctr:.2f}%", lift_label)
+
+    st.markdown("---")
+
+    # ── Section B: Segment type performance ──────────────────────────────────
+    st.markdown("### Segment Type Performance")
+    st.caption("Which targeting approach delivers the best CTR? (each row = all campaigns of that type)")
+
+    by_type = seg_df.groupby('_seg_type').agg(
+        campaigns=('Campaign_ID', 'nunique'),
+        avg_ctr=('All_Platform_CTR', 'mean'),
+        total_sent=('All_Platform_Sent', 'sum'),
+        total_conversions=('primary_conversions', 'sum'),
+        avg_seg_size=('All_Platform_Installed_Users_in_segment', 'mean'),
+        avg_reach=('reachability_rate', 'mean'),
+    ).reset_index().sort_values('avg_ctr', ascending=True)
+
+    by_type = by_type[by_type['_seg_type'] != 'Unknown']
+
+    TYPE_COLORS = {
+        'Behavioral':       '#6366f1',
+        'Custom Segment':   '#22c55e',
+        'Broadcast':        '#f59e0b',
+        'Attribute-based':  '#3b82f6',
+        'Other':            '#94a3b8',
+    }
+    bar_colors = [TYPE_COLORS.get(t, '#94a3b8') for t in by_type['_seg_type']]
+
+    fig_type = go.Figure(go.Bar(
+        x=by_type['avg_ctr'],
+        y=by_type['_seg_type'],
+        orientation='h',
+        marker_color=bar_colors,
+        text=by_type['avg_ctr'].apply(lambda v: f'{v:.2f}%'),
+        textposition='outside',
+        textfont=dict(size=13),
+        customdata=by_type[['campaigns', 'total_sent', 'avg_seg_size', 'avg_reach']].values,
+        hovertemplate=(
+            '<b>%{y}</b><br>'
+            'Avg CTR: %{x:.2f}%<br>'
+            'Campaigns: %{customdata[0]}<br>'
+            'Total Sent: %{customdata[1]:,.0f}<br>'
+            'Avg Segment Size: %{customdata[2]:,.0f}<br>'
+            'Avg Reachability: %{customdata[3]:.0%}'
+            '<extra></extra>'
+        ),
+    ))
+    fig_type.update_layout(
+        height=300,
+        margin=dict(t=20, b=10, l=10, r=80),
+        plot_bgcolor='white', paper_bgcolor='white',
+        xaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+        yaxis=dict(showgrid=False),
+    )
+    st.plotly_chart(fig_type, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Section C: Broadcast vs Targeted deep dive ────────────────────────────
+    st.markdown("### Broadcast vs. Targeted — Head to Head")
+
+    col_b, col_c, col_be = st.columns(3)
+
+    with col_b:
+        st.markdown(
+            f"""<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:16px;text-align:center">
+            <div style="font-size:13px;color:#92400e;font-weight:600">📢 Broadcast (All Users)</div>
+            <div style="font-size:32px;font-weight:700;color:#92400e;margin:8px 0">{broadcast_ctr:.2f}%</div>
+            <div style="font-size:12px;color:#78350f">Avg CTR · {len(broadcast_df):,} campaigns</div>
+            <div style="font-size:12px;color:#78350f">Avg reach: {broadcast_df['reachability_rate'].mean():.0%}</div>
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+    with col_c:
+        st.markdown(
+            f"""<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px;text-align:center">
+            <div style="font-size:13px;color:#166534;font-weight:600">🎯 Custom Segments</div>
+            <div style="font-size:32px;font-weight:700;color:#166534;margin:8px 0">{custom_ctr:.2f}%</div>
+            <div style="font-size:12px;color:#14532d">Avg CTR · {len(custom_df):,} campaigns</div>
+            <div style="font-size:12px;color:#14532d">Avg reach: {custom_df['reachability_rate'].mean():.0%}</div>
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+    behavioral_ctr = behavioral_df['All_Platform_CTR'].mean() if len(behavioral_df) > 0 else 0
+    with col_be:
+        st.markdown(
+            f"""<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px;text-align:center">
+            <div style="font-size:13px;color:#1e40af;font-weight:600">🔍 Behavioral Targeting</div>
+            <div style="font-size:32px;font-weight:700;color:#1e40af;margin:8px 0">{behavioral_ctr:.2f}%</div>
+            <div style="font-size:12px;color:#1e3a8a">Avg CTR · {len(behavioral_df):,} campaigns</div>
+            <div style="font-size:12px;color:#1e3a8a">Avg reach: {behavioral_df['reachability_rate'].mean():.0%}</div>
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── Section D: Top performing custom segments ─────────────────────────────
+    st.markdown("### Top Performing Custom Segments")
+    st.caption("Min 3 campaigns for statistical reliability · sorted by Avg CTR")
+
+    seg_agg = custom_df.groupby(['_seg_raw', '_seg_label']).agg(
+        campaigns=('Campaign_ID', 'nunique'),
+        avg_ctr=('All_Platform_CTR', 'mean'),
+        total_sent=('All_Platform_Sent', 'sum'),
+        total_conversions=('primary_conversions', 'sum'),
+        avg_seg_size=('All_Platform_Installed_Users_in_segment', 'mean'),
+        bus=('bu', lambda x: ', '.join(sorted(x.dropna().unique()[:3]))),
+    ).reset_index()
+
+    seg_agg_filt = seg_agg[seg_agg['campaigns'] >= 3].sort_values('avg_ctr', ascending=False).head(20)
+
+    if not seg_agg_filt.empty:
+        max_ctr = seg_agg_filt['avg_ctr'].max()
+
+        def _ctr_color(v):
+            pct = v / max_ctr if max_ctr > 0 else 0
+            if pct >= 0.8:
+                return 'background-color: #dcfce7; color: #14532d; font-weight: 600'
+            elif pct >= 0.5:
+                return 'background-color: #f0fdf4; color: #166534'
+            elif pct <= 0.2:
+                return 'background-color: #fef2f2; color: #991b1b'
+            return ''
+
+        disp = seg_agg_filt[['_seg_label', 'bus', 'campaigns', 'avg_ctr', 'total_sent', 'total_conversions']].copy()
+        disp.columns = ['Segment', 'BU(s)', 'Campaigns', 'Avg CTR (%)', 'Total Sent', 'Conversions']
+        disp['Avg CTR (%)'] = disp['Avg CTR (%)'].round(2)
+        disp['Total Sent'] = disp['Total Sent'].apply(lambda x: f"{int(x):,}")
+        disp['Conversions'] = disp['Conversions'].apply(lambda x: f"{int(x):,}")
+        disp = disp.reset_index(drop=True)
+
+        styled = disp.style.applymap(_ctr_color, subset=['Avg CTR (%)'])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+    else:
+        st.info("Not enough data with current filters (need ≥3 campaigns per segment).")
+
+    st.markdown("---")
+
+    # ── Section E: Segment size vs CTR scatter ────────────────────────────────
+    st.markdown("### Segment Size vs. CTR — The Targeting–Scale Tradeoff")
+    st.caption("Small segments with high CTR = highly targeted messaging that resonates. Large segments with high CTR = scalable wins.")
+
+    scatter_df = seg_agg[seg_agg['campaigns'] >= 2].copy()
+    scatter_df = scatter_df[scatter_df['avg_seg_size'] > 0].copy()
+
+    if not scatter_df.empty:
+        fig_scatter = go.Figure()
+
+        fig_scatter.add_trace(go.Scatter(
+            x=scatter_df['avg_seg_size'],
+            y=scatter_df['avg_ctr'],
+            mode='markers+text',
+            text=scatter_df['_seg_label'],
+            textposition='top center',
+            textfont=dict(size=9),
+            marker=dict(
+                size=scatter_df['campaigns'].clip(upper=50) * 1.5 + 6,
+                color=[TYPE_COLORS.get('Custom Segment', '#22c55e')] * len(scatter_df),
+                opacity=0.7,
+                line=dict(width=1, color='white'),
+            ),
+            customdata=scatter_df[['campaigns', 'total_sent', 'bus']].values,
+            hovertemplate=(
+                '<b>%{text}</b><br>'
+                'Avg CTR: %{y:.2f}%<br>'
+                'Avg Segment Size: %{x:,.0f}<br>'
+                'Campaigns: %{customdata[0]}<br>'
+                'Total Sent: %{customdata[1]:,.0f}<br>'
+                'BU: %{customdata[2]}'
+                '<extra></extra>'
+            ),
+        ))
+
+        fig_scatter.update_layout(
+            height=450,
+            margin=dict(t=20, b=20, l=20, r=20),
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(
+                title='Avg Segment Size (log scale)',
+                type='log',
+                showgrid=True, gridcolor='#f1f5f9',
+            ),
+            yaxis=dict(
+                title='Avg CTR (%)',
+                showgrid=True, gridcolor='#f1f5f9',
+            ),
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
+    else:
+        st.info("Not enough data for scatter plot with current filters.")
+
+    st.markdown("---")
+
+    # ── Section F: Segment reachability ──────────────────────────────────────
+    st.markdown("### Segment Reachability — Who Are You Over-Messaging?")
+    st.caption("Low reachability = many users in the segment are frequency-capped out. Below 80% is a red flag.")
+
+    reach_df = custom_df.groupby(['_seg_raw', '_seg_label']).agg(
+        campaigns=('Campaign_ID', 'nunique'),
+        avg_reach=('reachability_rate', 'mean'),
+        total_sent=('All_Platform_Sent', 'sum'),
+    ).reset_index()
+
+    reach_df = reach_df[reach_df['campaigns'] >= 2].sort_values('avg_reach', ascending=True).head(25)
+
+    if not reach_df.empty:
+        reach_df['avg_reach_pct'] = reach_df['avg_reach'] * 100
+        reach_colors = [
+            '#ef4444' if r < 70 else ('#f59e0b' if r < 80 else '#22c55e')
+            for r in reach_df['avg_reach_pct']
+        ]
+
+        fig_reach = go.Figure(go.Bar(
+            x=reach_df['avg_reach_pct'],
+            y=reach_df['_seg_label'],
+            orientation='h',
+            marker_color=reach_colors,
+            text=reach_df['avg_reach_pct'].apply(lambda v: f'{v:.0f}%'),
+            textposition='outside',
+            textfont=dict(size=11),
+            customdata=reach_df[['campaigns', 'total_sent']].values,
+            hovertemplate=(
+                '<b>%{y}</b><br>'
+                'Avg Reachability: %{x:.1f}%<br>'
+                'Campaigns: %{customdata[0]}<br>'
+                'Total Sent: %{customdata[1]:,.0f}'
+                '<extra></extra>'
+            ),
+        ))
+
+        # Add reference line at 80%
+        fig_reach.add_vline(
+            x=80, line_dash='dash', line_color='#f59e0b',
+            annotation_text='80% threshold', annotation_position='top right',
+        )
+        fig_reach.add_vline(
+            x=70, line_dash='dash', line_color='#ef4444',
+            annotation_text='70% warning', annotation_position='top left',
+        )
+
+        fig_reach.update_layout(
+            height=max(350, len(reach_df) * 22),
+            margin=dict(t=20, b=10, l=10, r=80),
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(title='Avg Reachability (%)', range=[0, 115], showgrid=True, gridcolor='#f1f5f9'),
+            yaxis=dict(showgrid=False, autorange='reversed'),
+        )
+        st.plotly_chart(fig_reach, use_container_width=True)
+    else:
+        st.info("Not enough data for reachability chart with current filters.")
+
+    st.markdown("---")
+
+    # ── Section G: Auto-generated key insights ────────────────────────────────
+    st.markdown("### Key Insights")
+
+    insights = []
+
+    # Insight 1: Custom vs broadcast lift
+    if broadcast_ctr > 0 and custom_ctr > 0:
+        if custom_ctr > broadcast_ctr:
+            insights.append(
+                f"🎯 **Custom segments outperform broadcast by {ctr_lift:+.1f}%** "
+                f"({custom_ctr:.2f}% vs {broadcast_ctr:.2f}% avg CTR) — targeting effort is paying off"
+            )
+        else:
+            insights.append(
+                f"⚠️ **Broadcast currently matches or beats custom segments** "
+                f"({broadcast_ctr:.2f}% vs {custom_ctr:.2f}% avg CTR) — review segment definitions or creative relevance"
+            )
+
+    # Insight 2: Behavioral targeting
+    if len(behavioral_df) > 0 and behavioral_ctr > 0:
+        beh_lift = round(((behavioral_ctr - broadcast_ctr) / broadcast_ctr) * 100, 1) if broadcast_ctr > 0 else 0
+        insights.append(
+            f"🔍 **Behavioral targeting is your highest-CTR approach** at {behavioral_ctr:.2f}% "
+            f"({beh_lift:+.1f}% vs broadcast) — but only used in {len(behavioral_df)} campaigns. Invest more here."
+        )
+
+    # Insight 3: Most-used segment
+    if not seg_agg.empty:
+        most_used = seg_agg.sort_values('campaigns', ascending=False).iloc[0]
+        insights.append(
+            f"📊 **Most-targeted segment: '{most_used['_seg_label']}'** "
+            f"used in {int(most_used['campaigns'])} campaigns with {most_used['avg_ctr']:.2f}% avg CTR"
+        )
+
+    # Insight 4: Lowest reachability segment
+    if not reach_df.empty:
+        worst_reach = reach_df.iloc[0]
+        if worst_reach['avg_reach_pct'] < 80:
+            insights.append(
+                f"🔴 **'{worst_reach['_seg_label']}' has {worst_reach['avg_reach_pct']:.0f}% reachability** "
+                f"({int(worst_reach['campaigns'])} campaigns) — these users are being heavily frequency-capped. Reduce send cadence."
+            )
+
+    # Insight 5: Highest CTR segment (min 5 campaigns)
+    top5_segs = seg_agg[seg_agg['campaigns'] >= 5].sort_values('avg_ctr', ascending=False)
+    if not top5_segs.empty:
+        top_s = top5_segs.iloc[0]
+        insights.append(
+            f"⭐ **Best performing segment: '{top_s['_seg_label']}'** "
+            f"at {top_s['avg_ctr']:.2f}% CTR across {int(top_s['campaigns'])} campaigns — "
+            f"replicate its targeting logic for other BUs"
+        )
+
+    render_insight_box('Segment Intelligence — Key Findings', insights)
+
+    st.markdown("---")
+
+    # ── Section H: Next steps ────────────────────────────────────────────────
+    st.markdown("### Recommended Next Steps")
+
+    next_steps = [
+        f"🎯 **Prioritize behavioral targeting** — at {behavioral_ctr:.2f}% CTR it outperforms all other types but is under-used ({len(behavioral_df)} campaigns only)",
+        "📦 **Build 3–5 new behavioral segments** based on high-intent signals: PDP views, cart abandonment, recent UPI transactions — these are your highest-lift audience types",
+        "🔴 **Fix over-messaged segments** — any segment below 80% reachability is hitting FC walls. Either reduce send frequency for that audience or widen the FC cap exception list",
+        "📊 **Audit broadcast campaigns** — each 'All Users' blast should have a clear reason. Most can be replaced by a targeted segment with higher CTR and lower volume cost",
+        f"⭐ **Replicate top-segment logic** — your best segments share a pattern (lifecycle stage + product status). Apply this template to untapped BUs",
+        "📈 **Track segment performance monthly** — add segment type as a dimension to your MoM CTR analysis to see if targeting quality is improving over time",
+    ]
+
+    render_insight_box('Action Plan', next_steps, box_type='success')
