@@ -2257,7 +2257,12 @@ elif page == '⏰ Timing & Frequency':
             pay_diff = pay['Payday Week'] - pay['Rest of Month']
             if abs(pay_diff) >= 0.05:
                 better_p = 'Payday Week (days 1–7)' if pay_diff > 0 else 'Rest of Month'
-                timing_insights.append(f"💰 **{better_p}** shows {abs(pay_diff):.2f}% higher CTR — time big campaigns around salary credit.")
+                payday_action = (
+                    f"align high-value campaigns with salary credit dates (1st–7th)"
+                    if pay_diff > 0 else
+                    f"your audience responds better outside the payday rush — spread campaigns across the full month"
+                )
+                timing_insights.append(f"💰 **{better_p}** shows {abs(pay_diff):.2f}% higher CTR — {payday_action}.")
     if timing_insights:
         render_insight_box('Key timing findings — act on these', timing_insights)
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
@@ -2374,12 +2379,21 @@ elif page == '⏰ Timing & Frequency':
                                   yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
             st.plotly_chart(fig_wknd, use_container_width=True)
 
-    # ── Next steps ────────────────────────────────────────────────────────────
-    best_slot_str = best_slot if best_slot else 'Morning'
-    best_day_str  = best_day  if best_day  else 'Tuesday'
+    # ── Next steps — data-driven ──────────────────────────────────────────────
+    best_slot_str = best_slot if best_slot else 'Evening'
+    best_day_str  = best_day  if best_day  else 'Monday'
+
+    # Compute payday direction from the data for the action text
+    payday_action_text = "Spread campaigns across the full month — payday week actually underperforms in your data"
+    if 'day_of_month_bucket' in m.columns:
+        pay_check = m.groupby('day_of_month_bucket')['All_Platform_CTR'].mean()
+        if 'Payday Week' in pay_check.index and 'Rest of Month' in pay_check.index:
+            if pay_check['Payday Week'] > pay_check['Rest of Month']:
+                payday_action_text = "Align high-value campaigns with salary credit dates (1st–7th) — payday week outperforms"
+
     render_insight_box('Recommended next steps', [
-        f"📅 **Schedule next week's campaigns** for {best_day_str} at {best_slot_str} — highest CTR window from your data",
-        "📊 **Audit cadence** — use the heatmap to find hours with low CTR and avoid them for important campaigns",
-        "💰 **Payday calendar** — if payday week outperforms, align your highest-value campaigns with salary credit dates (1st–7th)",
-        "🧪 **Test day-of-week** — run the same campaign on a Tuesday vs Saturday and measure if your specific BU behaves differently",
+        f"📅 **Best send window:** {best_day_str} at {best_slot_str} — consistently highest CTR in your 3-month data",
+        "📊 **Read the heatmap** — dark green cells = your best send windows. White cells = no campaigns sent there yet, worth testing",
+        f"💰 **Payday calendar:** {payday_action_text}",
+        f"🧪 **Test timing** — run the same campaign on {best_day_str} vs Sunday to confirm your BU-specific timing patterns",
     ], box_type='success')
