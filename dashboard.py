@@ -1106,20 +1106,34 @@ elif page == '✍️ Copy Intelligence':
         # Filter to campaigns with a reasonable number of sends
         if 'All_Platform_Sent' in master_copy.columns:
             master_copy['All_Platform_Sent'] = pd.to_numeric(master_copy['All_Platform_Sent'], errors='coerce')
-            master_copy = master_copy[master_copy['All_Platform_Sent'] >= 100]
+            master_copy['All_Platform_CTR']  = pd.to_numeric(master_copy['All_Platform_CTR'],  errors='coerce')
+            # Use same threshold as Top/Bottom ranking — excludes test campaigns with inflated CTR
+            master_copy = master_copy[master_copy['All_Platform_Sent'] >= MIN_SENT_THRESHOLD]
+            # Cap CTR at 100% — values above 100 indicate a data issue in MoEngage
+            master_copy = master_copy[master_copy['All_Platform_CTR'] <= 100]
 
         col_top, col_bot = st.columns(2)
 
+        def _sent_fmt(v):
+            try:
+                v = float(v)
+                if v >= 1_000_000: return f'{v/1_000_000:.1f}M'
+                if v >= 1_000: return f'{v/1_000:.0f}K'
+                return f'{v:,.0f}'
+            except: return '—'
+
         with col_top:
             st.subheader('Top 3 Copy Examples')
+            st.caption(f'Highest CTR — min {MIN_SENT_THRESHOLD:,} sent, max 100% CTR')
             top3 = master_copy.nlargest(3, 'All_Platform_CTR')
             for _, row in top3.iterrows():
-                ctr = row.get('All_Platform_CTR', 0)
+                ctr  = float(row.get('All_Platform_CTR', 0) or 0)
+                sent = row.get('All_Platform_Sent', 0)
                 title_text = str(row.get(title_col, '—'))
-                body_text = str(row.get(body_col, '—'))
-                tonality = str(row.get('tonality', '—'))
+                body_text  = str(row.get(body_col, '—'))
+                tonality   = str(row.get('tonality', '—'))
                 bu = str(row.get('bu', '—'))
-                with st.expander(f"✅ {ctr:.2f}% CTR — {bu}"):
+                with st.expander(f"✅ {ctr:.2f}% CTR — {bu}  ({_sent_fmt(sent)} sent)"):
                     st.markdown(f"**Title:** {title_text}")
                     st.markdown(f"**Body:** {body_text}")
                     st.markdown(f"**Tonality:** `{tonality}`")
@@ -1128,14 +1142,18 @@ elif page == '✍️ Copy Intelligence':
 
         with col_bot:
             st.subheader('Worst 3 Copy Examples')
-            bot3 = master_copy.nsmallest(3, 'All_Platform_CTR')
+            st.caption(f'Lowest CTR — min {MIN_SENT_THRESHOLD:,} sent, excludes 0% CTR (zero-click campaigns)')
+            # Exclude 0% CTR — those are likely delivery issues, not copy issues
+            worst_pool = master_copy[master_copy['All_Platform_CTR'] > 0]
+            bot3 = worst_pool.nsmallest(3, 'All_Platform_CTR')
             for _, row in bot3.iterrows():
-                ctr = row.get('All_Platform_CTR', 0)
+                ctr  = float(row.get('All_Platform_CTR', 0) or 0)
+                sent = row.get('All_Platform_Sent', 0)
                 title_text = str(row.get(title_col, '—'))
-                body_text = str(row.get(body_col, '—'))
-                tonality = str(row.get('tonality', '—'))
+                body_text  = str(row.get(body_col, '—'))
+                tonality   = str(row.get('tonality', '—'))
                 bu = str(row.get('bu', '—'))
-                with st.expander(f"❌ {ctr:.2f}% CTR — {bu}"):
+                with st.expander(f"❌ {ctr:.2f}% CTR — {bu}  ({_sent_fmt(sent)} sent)"):
                     st.markdown(f"**Title:** {title_text}")
                     st.markdown(f"**Body:** {body_text}")
                     st.markdown(f"**Tonality:** `{tonality}`")
