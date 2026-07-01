@@ -1768,79 +1768,240 @@ elif page == '📖 Brand Guidelines Impact':
 # PAGE 5 — TOP & BOTTOM CAMPAIGNS
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '🏆 Top & Bottom Campaigns':
-    st.title('🏆 Top & Bottom Campaigns')
-
-    tb = top_bottom.copy()
-    if selected_bus and 'bu' in tb.columns:
-        tb = tb[tb['bu'].isin(selected_bus)]
-
-    months = sorted(tb['sent_month'].dropna().unique().tolist()) if 'sent_month' in tb.columns else []
-    if months:
-        sel_month = st.selectbox('Select Month', months, index=len(months)-1)
-        tb_month = tb[tb['sent_month'] == sel_month]
-    else:
-        sel_month = None
-        tb_month = tb
-
+    # ── Data prep ─────────────────────────────────────────────────────────────
+    # Use master_enriched to allow full filter support (BU + period filters)
     title_col = 'Android_Message_Title_Android_Web_Title_iOS'
     body_col  = 'Android_Message_Android_Web_Subtitle_iOS'
 
-    col1, col2 = st.columns(2)
+    # Build Top/Bottom from filtered_master so BU+period filters work correctly
+    from src.top_bottom import build_top_bottom as _build_tb
+    from config import MIN_SENT_THRESHOLD
 
-    with col1:
-        st.subheader('Top 5 Campaigns')
-        top5 = tb_month[tb_month['rank_type'] == 'Top'].sort_values('rank') if 'rank_type' in tb_month.columns else pd.DataFrame()
-        if top5.empty and not tb_month.empty and 'All_Platform_CTR' in tb_month.columns:
-            # Fall back to top 5 by CTR
-            tb_month_sorted = tb_month.copy()
-            tb_month_sorted['All_Platform_CTR'] = pd.to_numeric(tb_month_sorted['All_Platform_CTR'], errors='coerce')
-            top5 = tb_month_sorted.nlargest(5, 'All_Platform_CTR')
+    fm = filtered_master.copy()
+    for col in ['All_Platform_Sent', 'All_Platform_CTR', 'All_Platform_Clicks',
+                'All_Platform_Impressions', 'primary_conversions']:
+        if col in fm.columns:
+            fm[col] = pd.to_numeric(fm[col], errors='coerce').fillna(0)
+    # Normalize column names for build_top_bottom
+    camp_col_name = 'Campaign_ID' if 'Campaign_ID' in fm.columns else 'Campaign ID'
+    name_col = 'Campaign_Name' if 'Campaign_Name' in fm.columns else 'Campaign Name'
+    fm_tb = _build_tb(fm) if not fm.empty else pd.DataFrame()
+
+    # Month selector
+    months_avail = sorted(fm_tb['sent_month'].dropna().unique().tolist()) if not fm_tb.empty and 'sent_month' in fm_tb.columns else []
+    if not months_avail and 'sent_month' in fm.columns:
+        months_avail = sorted(fm['sent_month'].dropna().unique().tolist())
+
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(m, m) for m in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">🏆 Top & Bottom Campaigns</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
+        Ranked by CTR · min {MIN_SENT_THRESHOLD:,} sends · max 100% CTR · use these as copy templates and warning signs
+    </p>
+    """, unsafe_allow_html=True)
+
+    # Month picker
+    if months_avail:
+        sel_month = st.selectbox('Select Month to Analyse', months_avail,
+                                 index=len(months_avail)-1,
+                                 help='Pick a month to see its top and bottom performing campaigns')
+    else:
+        sel_month = None
+
+    if sel_month and not fm_tb.empty and 'sent_month' in fm_tb.columns:
+        tb_month = fm_tb[fm_tb['sent_month'] == sel_month].copy()
+    elif not fm_tb.empty:
+        tb_month = fm_tb.copy()
+    else:
+        tb_month = pd.DataFrame()
+
+    # ── Visual comparison chart — all 10 campaigns at once ────────────────────
+    if not tb_month.empty and 'rank_type' in tb_month.columns and title_col in tb_month.columns:
+        top5 = tb_month[tb_month['rank_type'] == 'Top'].sort_values('rank').head(5)
+        bot5 = tb_month[tb_month['rank_type'] == 'Bottom'].sort_values('rank', ascending=False).head(5)
+
+        if not top5.empty or not bot5.empty:
+            # Build combined df for chart
+            chart_rows = []
+            for _, r in bot5.iterrows():
+                chart_rows.append({
+                    'label': str(r.get(title_col, '—'))[:40] + '...' if len(str(r.get(title_col,'—')))>40 else str(r.get(title_col,'—')),
+                    'ctr':   pd.to_numeric(r.get('All_Platform_CTR', 0), errors='coerce') or 0,
+                    'type':  'Bottom 5',
+                    'bu':    str(r.get('bu','—')),
+                })
+            for _, r in top5.iterrows():
+                chart_rows.append({
+                    'label': str(r.get(title_col, '—'))[:40] + '...' if len(str(r.get(title_col,'—')))>40 else str(r.get(title_col,'—')),
+                    'ctr':   pd.to_numeric(r.get('All_Platform_CTR', 0), errors='coerce') or 0,
+                    'type':  'Top 5',
+                    'bu':    str(r.get('bu','—')),
+                })
+            chart_df = pd.DataFrame(chart_rows)
+
+            colours = ['#ef4444' if t == 'Bottom 5' else '#22c55e' for t in chart_df['type']]
+            fig_rank = go.Figure(go.Bar(
+                x=chart_df['ctr'],
+                y=chart_df['label'],
+                orientation='h',
+                marker_color=colours,
+                text=chart_df.apply(lambda r: f"{r['ctr']:.2f}% — {r['bu']}", axis=1),
+                textposition='outside',
+                textfont=dict(size=11),
+                hovertemplate='%{y}<br>CTR: %{x:.2f}%<extra></extra>',
+            ))
+            fig_rank.update_layout(
+                height=max(320, len(chart_rows) * 38),
+                margin=dict(t=20, b=10, l=10, r=200),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+                yaxis=dict(showgrid=False, tickfont=dict(size=11), autorange='reversed'),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_rank, use_container_width=True)
+            st.caption('🟢 Top 5 (green) · 🔴 Bottom 5 (red) · Title truncated to 40 chars')
+
+    # ── Pattern insights ──────────────────────────────────────────────────────
+    if not tb_month.empty and 'rank_type' in tb_month.columns:
+        top5 = tb_month[tb_month['rank_type'] == 'Top'].head(5)
+        bot5 = tb_month[tb_month['rank_type'] == 'Bottom'].head(5)
+
+        insights_top = []
+        insights_bot = []
+
+        def flag_count(df, col, val=True):
+            if col not in df.columns: return 0
+            col_vals = df[col].astype(str).str.lower()
+            return int((col_vals == str(val).lower()).sum())
+
+        def pct(n, total): return f'{int(n)}/{int(total)}' if total > 0 else '—'
 
         if not top5.empty:
-            for _, row in top5.iterrows():
-                ctr_val = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce')
-                bu = str(row.get('bu', '—'))
-                rank = row.get('rank', '—')
-                label = f"#{int(rank)} — {bu} | CTR: {ctr_val:.2f}%" if pd.notna(ctr_val) else f"#{rank} — {bu}"
-                with st.expander(label):
-                    st.markdown(f"**Title:** {row.get(title_col, '—')}")
-                    st.markdown(f"**Body:** {row.get(body_col, '—')}")
-                    st.markdown(f"**Tonality:** `{row.get('tonality', '—')}`")
-                    brand = row.get('brand_compliant', None)
-                    brand_str = '✅ Yes' if brand is True or str(brand).lower() == 'true' else '❌ No'
-                    st.markdown(f"**Brand Compliant:** {brand_str}")
-                    st.markdown(f"**Sent:** {fmt_num(row.get('All_Platform_Sent', 0))} | **Clicks:** {fmt_num(row.get('All_Platform_Clicks', 0))}")
-                    diagnosis = auto_diagnosis(row, title_col, body_col)
-                    st.success(f"💡 {diagnosis}")
-        else:
-            st.info('No top campaign data for the selected month/BU.')
-
-    with col2:
-        st.subheader('Bottom 5 Campaigns')
-        bot5 = tb_month[tb_month['rank_type'] == 'Bottom'].sort_values('rank') if 'rank_type' in tb_month.columns else pd.DataFrame()
-        if bot5.empty and not tb_month.empty and 'All_Platform_CTR' in tb_month.columns:
-            tb_month_sorted = tb_month.copy()
-            tb_month_sorted['All_Platform_CTR'] = pd.to_numeric(tb_month_sorted['All_Platform_CTR'], errors='coerce')
-            bot5 = tb_month_sorted.nsmallest(5, 'All_Platform_CTR')
+            n = len(top5)
+            has_num   = flag_count(top5, 'has_specific_number')
+            has_emoji = flag_count(top5, 'has_emoji')
+            is_do     = flag_count(top5, 'brand_compliant')
+            has_verb  = flag_count(top5, 'has_action_verb')
+            if has_num >= 3:   insights_top.append(f"💰 **{pct(has_num, n)}** top campaigns mention a specific ₹ amount or POPcoins value")
+            if has_emoji >= 3: insights_top.append(f"😊 **{pct(has_emoji, n)}** top campaigns have an emoji in the title")
+            if is_do >= 3:     insights_top.append(f"✅ **{pct(is_do, n)}** top campaigns follow the brand voice guidelines (DO tone)")
+            if has_verb >= 3:  insights_top.append(f"🎯 **{pct(has_verb, n)}** top campaigns use a strong action verb (Win/Earn/Get/Claim)")
 
         if not bot5.empty:
-            for _, row in bot5.iterrows():
-                ctr_val = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce')
-                bu = str(row.get('bu', '—'))
-                rank = row.get('rank', '—')
-                label = f"#{int(rank) if pd.notna(rank) else '—'} — {bu} | CTR: {ctr_val:.2f}%" if pd.notna(ctr_val) else f"#{rank} — {bu}"
-                with st.expander(label):
-                    st.markdown(f"**Title:** {row.get(title_col, '—')}")
-                    st.markdown(f"**Body:** {row.get(body_col, '—')}")
-                    st.markdown(f"**Tonality:** `{row.get('tonality', '—')}`")
-                    brand = row.get('brand_compliant', None)
-                    brand_str = '✅ Yes' if brand is True or str(brand).lower() == 'true' else '❌ No'
-                    st.markdown(f"**Brand Compliant:** {brand_str}")
-                    st.markdown(f"**Sent:** {fmt_num(row.get('All_Platform_Sent', 0))} | **Clicks:** {fmt_num(row.get('All_Platform_Clicks', 0))}")
-                    diagnosis = auto_diagnosis(row, title_col, body_col)
-                    st.error(f"⚠️ {diagnosis}")
-        else:
-            st.info('No bottom campaign data for the selected month/BU.')
+            n = len(bot5)
+            no_num   = n - flag_count(bot5, 'has_specific_number')
+            is_dont  = n - flag_count(bot5, 'brand_compliant')
+            no_emoji = n - flag_count(bot5, 'has_emoji')
+            if no_num >= 3:   insights_bot.append(f"❌ **{pct(no_num, n)}** bottom campaigns had no specific ₹ or POPcoins value — too vague")
+            if is_dont >= 3:  insights_bot.append(f"⚠️ **{pct(is_dont, n)}** bottom campaigns used a DON'T tone (jargon, vague, or forced Gen-Z)")
+            if no_emoji >= 3: insights_bot.append(f"📵 **{pct(no_emoji, n)}** bottom campaigns had no emoji in the title")
+
+        col_i1, col_i2 = st.columns(2)
+        with col_i1:
+            if insights_top:
+                render_insight_box('What top campaigns have in common', insights_top, box_type='success')
+        with col_i2:
+            if insights_bot:
+                render_insight_box('Why bottom campaigns underperformed', insights_bot, box_type='danger')
+
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+    # ── Campaign cards ────────────────────────────────────────────────────────
+    def _brand_badge(val):
+        is_compliant = str(val).lower() in ('true', '1', 'yes') or val is True
+        try: is_compliant = is_compliant or float(val) == 1.0
+        except: pass
+        if is_compliant:
+            return '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700">✅ Brand Compliant</span>'
+        return '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700">❌ Non-Compliant</span>'
+
+    def _sfmt(v):
+        try:
+            v = float(v)
+            return f'{v/1_000_000:.1f}M' if v>=1e6 else (f'{v/1_000:.0f}K' if v>=1_000 else f'{v:,.0f}')
+        except: return '—'
+
+    def _campaign_card(row, rank_type='Top'):
+        border = '#22c55e' if rank_type == 'Top' else '#ef4444'
+        icon   = '🟢' if rank_type == 'Top' else '🔴'
+        ctr    = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce') or 0
+        sent   = row.get('All_Platform_Sent', 0)
+        clicks = row.get('All_Platform_Clicks', 0)
+        rank   = row.get('rank', '—')
+        bu     = str(row.get('bu', '—'))
+        title  = str(row.get(title_col, '—'))
+        body   = str(row.get(body_col, '—'))
+        tone   = str(row.get('tonality', '—'))
+        brand  = row.get('brand_compliant', False)
+        diag   = auto_diagnosis(row, title_col, body_col)
+        conv   = row.get('primary_conversions', 0)
+
+        return f"""
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;
+                    padding:16px 20px;margin-bottom:12px;border-left:4px solid {border}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+                <div>
+                    <span style="font-size:12px;color:#64748b;font-weight:700">
+                        {icon} #{int(rank) if pd.notna(rank) and str(rank) != '—' else '?'} · {bu}
+                    </span>
+                </div>
+                <div style="text-align:right">
+                    <span style="font-size:22px;font-weight:800;color:#0f172a">{ctr:.2f}%</span>
+                    <span style="font-size:11px;color:#94a3b8"> CTR</span>
+                </div>
+            </div>
+            <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px">"{title}"</div>
+            <div style="font-size:12px;color:#475569;margin-bottom:10px">{body}</div>
+            <div style="display:flex;gap:16px;font-size:11px;color:#64748b;margin-bottom:8px">
+                <span>📤 {_sfmt(sent)} sent</span>
+                <span>👆 {_sfmt(clicks)} clicks</span>
+                {'<span>🎯 ' + _sfmt(conv) + ' converted</span>' if float(conv or 0) > 0 else ''}
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-bottom:8px">Tone: <em>{tone}</em> &nbsp; {_brand_badge(brand)}</div>
+            <div style="background:#f8fafc;border-radius:6px;padding:8px 12px;font-size:12px;color:#1e40af">
+                💡 {diag}
+            </div>
+        </div>
+        """
+
+    if not tb_month.empty and 'rank_type' in tb_month.columns:
+        top5 = tb_month[tb_month['rank_type'] == 'Top'].sort_values('rank').head(5)
+        bot5 = tb_month[tb_month['rank_type'] == 'Bottom'].sort_values('rank').head(5)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f'<div style="font-size:15px;font-weight:800;color:#15803d;margin-bottom:12px">🟢 Top 5 Campaigns — {sel_month}</div>', unsafe_allow_html=True)
+            if not top5.empty:
+                for _, row in top5.iterrows():
+                    st.markdown(_campaign_card(row, 'Top'), unsafe_allow_html=True)
+            else:
+                st.info('No top campaign data available.')
+
+        with col2:
+            st.markdown(f'<div style="font-size:15px;font-weight:800;color:#dc2626;margin-bottom:12px">🔴 Bottom 5 Campaigns — {sel_month}</div>', unsafe_allow_html=True)
+            if not bot5.empty:
+                for _, row in bot5.iterrows():
+                    st.markdown(_campaign_card(row, 'Bottom'), unsafe_allow_html=True)
+            else:
+                st.info('No bottom campaign data available.')
+    else:
+        st.info('No campaign data for the selected filters. Try selecting different months or BUs.')
+
+    # ── Next steps ────────────────────────────────────────────────────────────
+    render_insight_box('Recommended next steps', [
+        "📋 **Use Top 5 as copy templates** — share these with your copy team as examples of what works",
+        "🔍 **Brief the Bottom 5** — for each underperformer, identify the copy issue (vague, no value, wrong tone) and brief a replacement",
+        "✍️ **Go to Copy Intelligence** to understand which copy elements (emoji, title length, specific number) drove the top campaigns",
+        "🧪 **Run A/B tests** on any patterns you spot — if top campaigns all have specific ₹ amounts, test value-first copy on the next campaign",
+    ], box_type='success')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
