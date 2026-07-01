@@ -352,6 +352,29 @@ selected_bus = st.sidebar.multiselect('Filter by BU', all_bus, default=all_bus)
 bu_filtered = bool(selected_bus and set(selected_bus) != set(all_bus))
 
 st.sidebar.markdown('---')
+
+# ── Universal Period Filter ───────────────────────────────────────────────────
+all_months = sorted(master['sent_month'].dropna().unique().tolist()) if 'sent_month' in master.columns else []
+# Format months for display: '2026-03' → 'Mar 2026'
+def fmt_month(m):
+    try:
+        import datetime
+        y, mo = m.split('-')
+        return datetime.date(int(y), int(mo), 1).strftime('%b %Y')
+    except:
+        return m
+
+month_labels  = {m: fmt_month(m) for m in all_months}
+month_options = all_months  # raw values used for filtering
+selected_months = st.sidebar.multiselect(
+    'Filter by Month',
+    options=month_options,
+    default=month_options,
+    format_func=lambda m: month_labels.get(m, m),
+)
+period_filtered = bool(selected_months and set(selected_months) != set(all_months))
+
+st.sidebar.markdown('---')
 if st.sidebar.button('🔄 Refresh Data'):
     st.cache_data.clear()
     st.rerun()
@@ -360,12 +383,17 @@ st.sidebar.caption('Data refreshes automatically after each weekly run of run_re
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FILTERED MASTER (applied everywhere)
+# FILTERED MASTER (BU + Period filters — applied everywhere)
 # ══════════════════════════════════════════════════════════════════════════════
-if selected_bus and 'bu' in master.columns:
-    filtered_master = master[master['bu'].isin(selected_bus)].copy()
-else:
-    filtered_master = master.copy()
+filtered_master = master.copy()
+
+if selected_bus and 'bu' in filtered_master.columns:
+    filtered_master = filtered_master[filtered_master['bu'].isin(selected_bus)]
+
+if selected_months and 'sent_month' in filtered_master.columns:
+    filtered_master = filtered_master[filtered_master['sent_month'].isin(selected_months)]
+
+filtered_master = filtered_master.copy()
 
 if 'All_Platform_CTR' in filtered_master.columns:
     filtered_master['All_Platform_CTR'] = pd.to_numeric(filtered_master['All_Platform_CTR'], errors='coerce')
@@ -377,10 +405,10 @@ if 'All_Platform_Sent' in filtered_master.columns:
 # PAGE 1 — EXECUTIVE OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 if page == '📊 Executive Overview':
-    # BU filter fix: recompute from master if BU filter active
-    if bu_filtered:
+    # Recompute from filtered_master whenever BU OR period filter is active
+    if bu_filtered or period_filtered:
         ov = compute_overall(filtered_master)
-        bu_label = ', '.join(selected_bus)
+        bu_label = ', '.join(selected_bus) if bu_filtered else 'All BUs'
     else:
         ov = overall.sort_values('period_label') if 'period_label' in overall.columns else overall.copy()
         # Suppress deltas where previous month < 10 campaigns
@@ -674,10 +702,15 @@ if page == '📊 Executive Overview':
 # PAGE 2 — BU PERFORMANCE
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '🏢 BU Performance':
-    # ── Data prep ─────────────────────────────────────────────────────────────
-    monthly = by_bu[by_bu['period_type'] == 'Monthly'].copy() if 'period_type' in by_bu.columns else by_bu.copy()
-    if selected_bus and 'bu' in monthly.columns:
-        monthly = monthly[monthly['bu'].isin(selected_bus)]
+    # ── Data prep — recompute from master if any filter active ─────────────────
+    from src.summary_bu import build_summary_bu as _build_bu
+    if bu_filtered or period_filtered:
+        monthly_all = _build_bu(filtered_master)
+        monthly = monthly_all[monthly_all['period_type'] == 'Monthly'].copy() if 'period_type' in monthly_all.columns else monthly_all.copy()
+    else:
+        monthly = by_bu[by_bu['period_type'] == 'Monthly'].copy() if 'period_type' in by_bu.columns else by_bu.copy()
+        if selected_bus and 'bu' in monthly.columns:
+            monthly = monthly[monthly['bu'].isin(selected_bus)]
     monthly = monthly.sort_values(['bu', 'period_label'])
 
     for col in ['All_Platform_CTR', 'All_Platform_Sent', 'primary_conversions',
