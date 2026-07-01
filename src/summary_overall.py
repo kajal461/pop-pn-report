@@ -8,9 +8,20 @@ METRIC_COLS = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
 SUM_COLS = {COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, 'primary_conversions'}
 
 
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize BigQuery underscore column names back to space-separated format."""
+    known = set(METRIC_COLS + ['Campaign ID', 'sent_month', 'bu'])
+    rename = {}
+    for col in df.columns:
+        space_ver = col.replace('_', ' ')
+        if col not in known and space_ver in known and col != space_ver:
+            rename[col] = space_ver
+    return df.rename(columns=rename) if rename else df
+
+
 def build_summary_overall(master: pd.DataFrame) -> pd.DataFrame:
     """Monthly overall aggregation with MOM deltas."""
-    master = master.copy()
+    master = _normalize_cols(master.copy())
     for col in METRIC_COLS:
         if col in master.columns:
             master[col] = pd.to_numeric(master[col], errors='coerce').fillna(0)

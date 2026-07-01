@@ -8,6 +8,26 @@ METRIC_COLS = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
 SUM_COLS = {COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, 'primary_conversions'}
 
 
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize BigQuery-sanitized column names (underscores) back to MoEngage
+    space-separated format so all config constants work correctly.
+    e.g. 'All_Platform_CTR' → 'All Platform CTR'
+    Only renames columns that match a known metric constant.
+    """
+    known = set(METRIC_COLS + [
+        'Campaign ID', 'Campaign Name', 'is_ab_test', 'sent_month',
+        'sent_week', 'bu', 'conversion_tracked', 'primary_conversions',
+        'click_to_convert_rate', 'end_to_end_funnel_rate', 'reachability_rate',
+    ])
+    rename = {}
+    for col in df.columns:
+        space_ver = col.replace('_', ' ')
+        if col not in known and space_ver in known and col != space_ver:
+            rename[col] = space_ver
+    return df.rename(columns=rename) if rename else df
+
+
 def _aggregate(master: pd.DataFrame, period_col: str) -> pd.DataFrame:
     # Support both raw pipeline column names (spaces) and BigQuery sanitized names (underscores)
     camp_id_col = 'Campaign_ID' if 'Campaign_ID' in master.columns else 'Campaign ID'
@@ -33,7 +53,7 @@ def _aggregate(master: pd.DataFrame, period_col: str) -> pd.DataFrame:
 
 def build_summary_bu(master: pd.DataFrame) -> pd.DataFrame:
     """Monthly + weekly aggregation per BU with MOM/WOW deltas."""
-    master = master.copy()
+    master = _normalize_cols(master.copy())
     for col in METRIC_COLS:
         if col in master.columns:
             master[col] = pd.to_numeric(master[col], errors='coerce').fillna(0)
