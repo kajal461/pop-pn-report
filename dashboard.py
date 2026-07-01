@@ -364,42 +364,36 @@ def generate_copy_rules(copy_data: pd.DataFrame) -> list:
             'action': 'Preferred verbs: Win, Earn, Claim, Get, Grab, Save',
         })
 
-    # FOMO rule
+    # FOMO rule — fixed evidence string
     best_v, best_ctr, worst_v, diff = get_best_worst('has_fomo_signal')
     if diff and diff >= 0.05:
         has_better = best_v == 'True'
-        fomo_rule = 'Use urgency signals sparingly — they help' if has_better else "Avoid overusing urgency/FOMO — it's not working"
+        fomo_rule = 'Use urgency signals — they help CTR' if has_better else "Avoid urgency/FOMO language — it's not improving CTR"
+        fomo_with = 'with' if has_better else 'without'
+        fomo_action = '"Last chance", "Expires tonight" — use contextually, max 1–2x per week per BU' if has_better else 'Drop "last chance" / "expires" copy — data shows it underperforms vs direct value messaging'
         rules.append({
             'rule': fomo_rule,
-            'evidence': 'FOMO campaigns → ' + f'{best_ctr:.2f}% CTR',
+            'evidence': 'Campaigns ' + fomo_with + ' urgency language → ' + f'{best_ctr:.2f}% CTR (best group)',
             'impact': '+' + f'{diff:.2f}% difference',
-            'action': '"Last chance", "Expires tonight", "Only today" — use max 1–2x per week per BU',
+            'action': fomo_action,
         })
 
-    # Cultural reference rule
+    # Cultural reference rule — fix contradictory action
     best_v, best_ctr, worst_v, diff = get_best_worst('has_cultural_reference')
     if diff and diff >= 0.05:
         has_better = best_v == 'True'
-        cult_rule = 'Tie campaigns to cultural moments (IPL, Diwali, etc.)' if has_better else "Cultural references aren't driving CTR in this period"
+        cult_rule = 'Tie campaigns to cultural moments (IPL, Diwali, etc.) — it works' if has_better else "Cultural references aren't currently driving CTR — keep messaging direct"
+        cult_action = ('Plan campaigns around upcoming events: cricket, Diwali, Holi, payday week' if has_better
+                       else 'Focus on direct value messaging (₹ amount, POPcoins) rather than cultural tie-ins for now')
         rules.append({
             'rule': cult_rule,
-            'evidence': 'Cultural ref campaigns → ' + f'{best_ctr:.2f}% CTR',
+            'evidence': 'Campaigns ' + ('with' if has_better else 'without') + ' cultural reference → ' + f'{best_ctr:.2f}% CTR',
             'impact': '+' + f'{diff:.2f}% difference',
-            'action': 'Plan campaigns around cricket matches, festivals, payday week',
+            'action': cult_action,
         })
 
-    # Brand era rule
-    best_v, best_ctr, worst_v, diff = get_best_worst('brand_guidelines_era')
-    if diff and diff >= 0.05:
-        post_better = best_v == 'Post-June'
-        brand_status = 'is' if post_better else 'is not yet'
-        brand_era = 'Post-June' if post_better else 'Pre-June'
-        rules.append({
-            'rule': 'Brand book ' + brand_status + ' improving CTR',
-            'evidence': brand_era + ' campaigns → ' + f'{best_ctr:.2f}% CTR',
-            'impact': f'{diff:+.2f}% since June (note: scale-up effect also present)',
-            'action': 'See Brand Guidelines Impact page for full analysis',
-        })
+    # Brand era rule — removed (inconsistent with Page 4 weighted CTR, covered there already)
+    # Skipping to avoid contradicting the -0.28% shown on Brand Guidelines page
 
     return rules
 
