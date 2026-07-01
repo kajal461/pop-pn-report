@@ -2602,6 +2602,19 @@ elif page == '📦 Segment Intelligence':
         '3rd_txn': 'Activation (Nudge to 3rd Txn)',
         'shop': 'Retention (Shoppers)',
         'Shoppers': 'Retention (Shoppers)',
+        # UPI cashback = retention (rewarding existing transactors)
+        '50rs_CB': 'Retention (Cashback/Loyalty)',
+        '50Rs_CB': 'Retention (Cashback/Loyalty)',
+        '50rs': 'Retention (Cashback/Loyalty)',
+        # Mandate done = active users = retention
+        'mandate_done': 'Retention (POPchop Activated)',
+        'mandate_not_done': 'Activation (POPchop Mandate Pending)',
+        # Card linked users = activation (have card, need to transact)
+        'Linked': 'Activation (Card Linked, No Txn)',
+        'linked': 'Activation (Card Linked, No Txn)',
+        # Other clear retention signals
+        'users': 'Retention (Existing Users)',
+        'card_users': 'Retention (Card Holders)',
     }
 
     SEGMENT_DISPLAY = {
@@ -2612,7 +2625,8 @@ elif page == '📦 Segment Intelligence':
         'BPC_Premium': 'Premium Users',
         'Shoppers_2811': 'Active Shoppers (Nov cohort)',
         'RCBP_2nd_txn_2004': 'RCBP 2nd Transaction Users',
-        'UPI_50rs_CB': 'UPI ₹50 Cashback Recipients',
+        'UPI_50rs_CB': 'UPI ₹50 Cashback Users (Retention)',
+        'UPI_50Rs_Cb': 'UPI ₹50 Cashback Users (Retention)',
         'UPI_noncard_ntu': 'UPI Non-Card New Users',
         'UPI_non_card_ntu': 'UPI Non-Card New Users',
         'POPcard_NTU': 'POPcard New Users',
@@ -2635,8 +2649,11 @@ elif page == '📦 Segment Intelligence':
             seg_type = 'Broadcast'
             seg_clean = 'All Users (Broadcast)'
         elif 'Users in custom segment:' in f:
-            match = _re.search(r'Users in custom segment:\s*([^\s+,]+)', f)
+            # Stop at spaces, +, comma, AND < (MoEngage injects <br/> before exclusion criteria)
+            match = _re.search(r'Users in custom segment:\s*([^\s+,<]+)', f)
             raw = match.group(1) if match else f[:40]
+            # Strip any residual HTML tags from the raw segment name
+            raw = _re.sub(r'<[^>]+>', '', raw).strip()
             seg_type = 'Custom Segment'
             seg_clean = SEGMENT_DISPLAY.get(raw, raw.replace('_',' ').title())
         elif any(ev in f for ev in ['Has executed','PAGE_VIEWED','UPI_TRANSACTION','MANDATE_SETUP']):
