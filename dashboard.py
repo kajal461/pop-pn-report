@@ -597,6 +597,13 @@ if page == '📊 Executive Overview':
                             ov.iloc[i, ov.columns.get_loc(dcol)] = None
         bu_label = 'All BUs'
 
+    # Always strip NaT/null period_label rows — artefacts from merged exports
+    if 'period_label' in ov.columns:
+        ov = ov[
+            ov['period_label'].notna() &
+            (~ov['period_label'].astype(str).isin(['NaT', 'nan', 'None', '']))
+        ].copy()
+
     if ov.empty:
         st.warning('No data available for selected filters.')
     else:

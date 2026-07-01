@@ -54,6 +54,12 @@ def _aggregate(master: pd.DataFrame, period_col: str) -> pd.DataFrame:
 def build_summary_bu(master: pd.DataFrame) -> pd.DataFrame:
     """Monthly + weekly aggregation per BU with MOM/WOW deltas."""
     master = _normalize_cols(master.copy())
+    # Remove NaT/null sent_month rows before aggregation
+    if 'sent_month' in master.columns:
+        master = master[
+            master['sent_month'].notna() &
+            (~master['sent_month'].astype(str).isin(['NaT', 'nan', 'None', '']))
+        ]
     for col in METRIC_COLS:
         if col in master.columns:
             master[col] = pd.to_numeric(master[col], errors='coerce').fillna(0)
