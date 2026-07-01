@@ -605,27 +605,47 @@ if page == '📊 Executive Overview':
         prev   = ov.iloc[-2] if len(ov) > 1 else pd.Series(dtype='float64')
 
         # ── Page header ───────────────────────────────────────────────────────
-        latest_month = latest.get('period_label', '')
-        n_campaigns  = int(latest.get('campaign_count', 0))
+        # Show full date range in header, not just latest month
+        all_periods = sorted(ov['period_label'].dropna().unique().tolist()) if 'period_label' in ov.columns else []
+        if len(all_periods) > 1:
+            period_label_hdr = f"{all_periods[0]} → {all_periods[-1]}"
+        elif all_periods:
+            period_label_hdr = all_periods[0]
+        else:
+            period_label_hdr = latest.get('period_label', '')
+        n_campaigns_total = int(ov['campaign_count'].sum()) if 'campaign_count' in ov.columns else int(latest.get('campaign_count', 0))
         st.markdown(f"""
         <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
             <h1 style="margin:0;font-size:28px;font-weight:800">📊 Executive Overview</h1>
-            <span style="font-size:14px;color:#64748b;font-weight:500">{latest_month} · {bu_label} · {n_campaigns:,} campaigns</span>
+            <span style="font-size:14px;color:#64748b;font-weight:500">{period_label_hdr} · {bu_label} · {n_campaigns_total:,} campaigns</span>
         </div>
         """, unsafe_allow_html=True)
         st.markdown('<p style="color:#64748b;font-size:13px;margin:4px 0 16px">Month-over-month PN performance across all BUs. Answers: are we growing volume while maintaining CTR quality?</p>', unsafe_allow_html=True)
 
         # ── HTML Metric Cards ─────────────────────────────────────────────────
-        sent       = float(latest.get('All_Platform_Sent', 0) or 0)
-        ctr        = float(latest.get('All_Platform_CTR', 0) or 0)
-        conv       = float(latest.get('primary_conversions', 0) or 0)
+        # Aggregate across ALL months in ov (not just latest) for cumulative metrics
+        # Total Sent and Total Conversions = SUM across all selected months
+        # Avg CTR = campaign-weighted average across all selected months
+        if 'All_Platform_Sent' in ov.columns:
+            ov['All_Platform_Sent'] = pd.to_numeric(ov['All_Platform_Sent'], errors='coerce').fillna(0)
+        if 'All_Platform_CTR' in ov.columns:
+            ov['All_Platform_CTR'] = pd.to_numeric(ov['All_Platform_CTR'], errors='coerce').fillna(0)
+        if 'primary_conversions' in ov.columns:
+            ov['primary_conversions'] = pd.to_numeric(ov['primary_conversions'], errors='coerce').fillna(0)
+
+        sent = float(ov['All_Platform_Sent'].sum()) if 'All_Platform_Sent' in ov.columns else 0
+        conv = float(ov['primary_conversions'].sum()) if 'primary_conversions' in ov.columns else 0
+        # Weighted avg CTR across all months
+        if 'All_Platform_CTR' in ov.columns and sent > 0:
+            ctr = float((ov['All_Platform_CTR'] * ov['All_Platform_Sent']).sum() / sent)
+        else:
+            ctr = float(latest.get('All_Platform_CTR', 0) or 0)
+        # MOM deltas still reference latest month vs previous
         ctr_delta  = latest.get('mom_All_Platform_CTR_delta_pct', None)
         sent_delta = latest.get('mom_All_Platform_Sent_delta_pct', None)
 
         # End-to-end funnel from master
-        funnel_val = None
-        if 'end_to_end_funnel_rate' in filtered_master.columns:
-            funnel_val = pd.to_numeric(filtered_master['end_to_end_funnel_rate'], errors='coerce').mean()
+        funnel_val = conv / sent if sent > 0 and conv > 0 else None
 
         def delta_html(val, invert=False):
             if val is None or pd.isna(val):
