@@ -2265,35 +2265,62 @@ elif page == '🧪 A/B Testing Hub':
 
                 if winner_row is None: winner_row = rows.iloc[0]
 
-                w_ctr   = float(winner_row.get('All_Platform_CTR', 0) or 0)
-                l_ctr   = float(loser_row.get('All_Platform_CTR', 0) or 0)
-                lift    = float(winner_row.get('ab_lift_ctr', 0) or 0)
-                bu_name = str(winner_row.get('bu', '—'))
-                month   = str(winner_row.get('sent_month', '—'))
-                w_title = str(winner_row.get(title_col_ab, '—'))
-                l_title = str(loser_row.get(title_col_ab, '—'))
-                w_tone  = str(winner_row.get('tonality', '—'))
-                l_tone  = str(loser_row.get('tonality', '—'))
+                w_ctr    = float(winner_row.get('All_Platform_CTR', 0) or 0)
+                l_ctr    = float(loser_row.get('All_Platform_CTR', 0) or 0)
+                lift     = float(winner_row.get('ab_lift_ctr', 0) or 0)
+                bu_name  = str(winner_row.get('bu', '—'))
+                month    = str(winner_row.get('sent_month', '—'))
+                w_title  = str(winner_row.get(title_col_ab, '—'))
+                l_title  = str(loser_row.get(title_col_ab, '—'))
+                w_tone   = str(winner_row.get('tonality', '—'))
+                l_tone   = str(loser_row.get('tonality', '—'))
+                w_sent   = winner_row.get('All_Platform_Sent', 0) or 0
+                # Body text — try both sanitized and original column names
+                body_col_ab = next((c for c in [
+                    'Android_Message_Android_Web_Subtitle_iOS',
+                    'Android Message (Android, Web), Subtitle (iOS)',
+                ] if c in winner_row.index), None)
+                w_body = str(winner_row.get(body_col_ab, '')) if body_col_ab else ''
+                l_body = str(loser_row.get(body_col_ab, '')) if body_col_ab else ''
+                # What changed between A and B
+                title_changed = w_title != l_title
+
+                def sfmt_ab(v):
+                    try:
+                        v = float(v)
+                        return f'{v/1_000_000:.1f}M' if v>=1e6 else (f'{v/1_000:.0f}K' if v>=1_000 else f'{v:,.0f}')
+                    except: return '—'
 
                 card_html = (
                     '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;'
-                    'padding:16px;margin-bottom:12px">'
-                    '<div style="display:flex;justify-content:space-between;margin-bottom:10px">'
-                    '<span style="font-size:12px;color:#64748b;font-weight:700">' + bu_name + ' · ' + month + '</span>'
-                    '<span style="background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700">+' + f'{lift:.2f}% CTR lift' + '</span>'
+                    'padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,0.05)">'
+                    # Header
+                    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+                    '<span style="font-size:12px;color:#64748b;font-weight:700">' + bu_name + ' · ' + month + ' · ' + sfmt_ab(w_sent) + ' sends</span>'
+                    '<span style="background:#dbeafe;color:#1e40af;padding:3px 12px;border-radius:999px;font-size:12px;font-weight:700">+' + f'{lift:.2f}% CTR lift' + '</span>'
                     '</div>'
-                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
-                    '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px">'
-                    '<div style="font-size:10px;font-weight:700;color:#15803d;margin-bottom:4px">🏆 WINNER · ' + f'{w_ctr:.2f}% CTR' + '</div>'
-                    '<div style="font-size:13px;font-weight:600;color:#0f172a">&ldquo;' + w_title + '&rdquo;</div>'
-                    '<div style="font-size:11px;color:#64748b;margin-top:4px"><em>' + w_tone + '</em></div>'
+                    # Two-column cards
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
+                    # Winner
+                    '<div style="background:#f0fdf4;border:2px solid #86efac;border-radius:10px;padding:14px">'
+                    '<div style="font-size:11px;font-weight:800;color:#15803d;margin-bottom:6px;letter-spacing:0.05em">🏆 WINNER · ' + f'{w_ctr:.2f}% CTR' + '</div>'
+                    '<div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:4px">&ldquo;' + w_title + '&rdquo;</div>'
+                    + ('<div style="font-size:11px;color:#475569;margin-bottom:6px">' + w_body[:100] + ('...' if len(w_body)>100 else '') + '</div>' if w_body and w_body != '—' else '') +
+                    '<div style="font-size:11px;color:#64748b"><em>' + w_tone + '</em></div>'
                     '</div>'
-                    '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px">'
-                    '<div style="font-size:10px;font-weight:700;color:#dc2626;margin-bottom:4px">LOSER · ' + f'{l_ctr:.2f}% CTR' + '</div>'
-                    '<div style="font-size:13px;color:#374151">&ldquo;' + l_title + '&rdquo;</div>'
-                    '<div style="font-size:11px;color:#64748b;margin-top:4px"><em>' + l_tone + '</em></div>'
+                    # Loser
+                    '<div style="background:#fef2f2;border:2px solid #fecaca;border-radius:10px;padding:14px">'
+                    '<div style="font-size:11px;font-weight:800;color:#dc2626;margin-bottom:6px;letter-spacing:0.05em">❌ LOSER · ' + f'{l_ctr:.2f}% CTR' + '</div>'
+                    '<div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:4px">&ldquo;' + l_title + '&rdquo;</div>'
+                    + ('<div style="font-size:11px;color:#475569;margin-bottom:6px">' + l_body[:100] + ('...' if len(l_body)>100 else '') + '</div>' if l_body and l_body != '—' else '') +
+                    '<div style="font-size:11px;color:#64748b"><em>' + l_tone + '</em></div>'
                     '</div>'
                     '</div>'
+                    # What changed note
+                    + ('<div style="font-size:11px;color:#64748b;margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9">'
+                       '💡 <strong>What changed:</strong> ' +
+                       ('Different title copy' if title_changed else 'Same title, different targeting or timing') +
+                       '</div>' if True else '') +
                     '</div>'
                 )
                 st.markdown(card_html, unsafe_allow_html=True)
@@ -2301,7 +2328,7 @@ elif page == '🧪 A/B Testing Hub':
         # ── Next steps ────────────────────────────────────────────────────────
         render_insight_box('Recommended next steps', [
             '📋 **Read the winner cards above** — look for the pattern: what did the winning copy have that the loser didn\'t?',
-            '🔄 **Run more A/B tests** — especially for your top BUs; 255 experiments is a good start but more tests = better rules',
+            f'🔄 **Run more A/B tests** — especially for your top BUs; {n_campaigns:,} experiments is a good start but more tests = better rules',
             '✍️ **Codify the winner patterns** — if winners consistently use action verbs + specific ₹ amounts, make that the default brief template',
             '📖 **Cross-reference with Copy Intelligence** — do the A/B winners match the copy rules we derived from all campaigns?',
         ], box_type='success')
