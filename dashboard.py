@@ -981,184 +981,259 @@ elif page == '🏢 BU Performance':
 # PAGE 3 — COPY INTELLIGENCE
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '✍️ Copy Intelligence':
-    st.title('✍️ Copy Intelligence')
-    st.caption('What copy styles drive the best CTR? Based on analysis of all campaigns.')
-
-    # BU filter fix: recompute from master
-    if bu_filtered:
+    # ── Data prep — recompute when any filter active ──────────────────────────
+    if bu_filtered or period_filtered:
         copy_data = compute_copy_analysis(filtered_master)
-        st.info(f'Showing copy analysis for: {", ".join(selected_bus)} — recomputed from campaign data')
     else:
         copy_data = copy_df.copy()
 
-    total_campaigns = int(filtered_master['Campaign_ID'].nunique()) if 'Campaign_ID' in filtered_master.columns else 0
+    # Campaign count — handle both column name formats
+    camp_col = 'Campaign_ID' if 'Campaign_ID' in filtered_master.columns else 'Campaign ID'
+    total_campaigns = int(filtered_master[camp_col].nunique()) if camp_col in filtered_master.columns else 0
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(m, m) for m in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">✍️ Copy Intelligence</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle} · {total_campaigns:,} campaigns analysed</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ── Auto-insights ─────────────────────────────────────────────────────────
     copy_insights = insights_copy(copy_data)
     if copy_insights:
-        render_insight_box(
-            f'Key learnings from your {total_campaigns:,} campaigns',
-            copy_insights
-        )
+        render_insight_box(f'Key learnings from {total_campaigns:,} campaigns', copy_insights)
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-    st.markdown('---')
+    # ── Tonality chart — full width ───────────────────────────────────────────
+    st.markdown('<div class="section-header">CTR by Tonality — DO vs DON\'T Brand Voice</div>', unsafe_allow_html=True)
 
-    # ── Tonality performance ──────────────────────────────────────────────────
-    st.subheader("CTR by Tonality — DO vs DON'T")
-
-    with st.expander("ℹ️ What is tonality?", expanded=False):
-        st.markdown("""
-        **Tonality** is the voice/style label assigned to each campaign's copy by our NLP model.
-
-        - **DO labels** (green): Brand-approved styles like *Smart & Sharp*, *Relatable & Warm* — copy that feels authentic and on-brand
-        - **DON'T labels** (red): Patterns to avoid like *Corporate Jargon*, *Forced Gen-Z*, *Pushy Sales* — copy that feels inauthentic or off-brand
-
-        The brand book launched in **June 2025** defines these guidelines. Campaigns labeled with DO tones generally perform better.
-        """)
+    with st.expander("ℹ️ What do these labels mean?", expanded=False):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("""**✅ DO labels (green)** — Brand-approved copy styles:
+- `DO: Smart — Value-aware` — Specific ₹ or POPcoins amount mentioned
+- `DO: Smart — Simple` — Clear, direct, no jargon
+- `DO: Smart — Unique` — Witty hook or unexpected angle
+- `DO: Relatable — Friendly` — Warm, conversational tone
+- `DO: Relatable — Youthful` — Natural Gen Z energy, cultural reference
+- `DO: Relatable — Helpful` — Solves a real user need""")
+        with col_b:
+            st.markdown("""**❌ DON'T labels (red)** — Patterns to avoid:
+- `DON'T: Corporate Jargon` — "eligible", "unredeemed", "transact"
+- `DON'T: Forced Gen Z` — "bestie", "slay", "rizz"
+- `DON'T: Vague` — "something special awaits", "check this out"
+- `DON'T: Cliche` — "exclusive offer", "don't miss out"
+- `DON'T: Condescending` — "you haven't tried", "you missed"
+- `DON'T: Lecture-y` — long preachy body copy""")
 
     ton_df = copy_data[copy_data['dimension'] == 'tonality'].copy() if 'dimension' in copy_data.columns else pd.DataFrame()
     if not ton_df.empty:
+        ton_df['avg_ctr'] = pd.to_numeric(ton_df['avg_ctr'], errors='coerce').fillna(0)
         ton_df = ton_df.sort_values('avg_ctr', ascending=True)
         colours = []
         for v in ton_df['dimension_value']:
-            v_str = str(v)
-            if v_str.startswith('DO') or v_str.startswith('Smart') or v_str.startswith('Relatable'):
-                colours.append('#22c55e')
-            elif v_str.startswith("DON") or v_str.startswith('Corporate') or v_str.startswith('Forced') or v_str.startswith('Pushy'):
-                colours.append('#ef4444')
-            else:
-                colours.append('#94a3b8')
-
-        fig = go.Figure(go.Bar(
-            x=ton_df['avg_ctr'],
-            y=ton_df['dimension_value'],
-            orientation='h',
-            marker_color=colours,
-            text=ton_df['avg_ctr'].apply(lambda x: f'{x:.2f}%'),
+            if str(v).startswith('DO'): colours.append('#22c55e')
+            elif str(v).startswith("DON"): colours.append('#ef4444')
+            else: colours.append('#94a3b8')
+        fig_ton = go.Figure(go.Bar(
+            x=ton_df['avg_ctr'], y=ton_df['dimension_value'],
+            orientation='h', marker_color=colours,
+            text=ton_df.apply(lambda r: f"{r['avg_ctr']:.2f}%  ({int(r.get('campaign_count',0))} campaigns)", axis=1),
             textposition='outside',
-            customdata=ton_df['campaign_count'] if 'campaign_count' in ton_df.columns else None,
+            hovertemplate='%{y}<br>Avg CTR: %{x:.2f}%<extra></extra>',
         ))
-        if 'campaign_count' in ton_df.columns:
-            fig.update_traces(hovertemplate='%{y}<br>Avg CTR: %{x:.2f}%<br>Campaigns: %{customdata}<extra></extra>')
-        fig.update_layout(
-            height=500, margin=dict(t=10, b=10, l=10, r=80),
+        fig_ton.update_layout(
+            height=max(400, len(ton_df) * 38),
+            margin=dict(t=10, b=10, l=10, r=200),
             xaxis_title='Avg CTR (%)',
-            plot_bgcolor='#fafafa', paper_bgcolor='white',
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
         )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info('Tonality data not available.')
+        st.plotly_chart(fig_ton, use_container_width=True)
 
-    st.markdown('---')
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-    # ── Copy cuts grid ────────────────────────────────────────────────────────
-    st.subheader('Copy Element Performance')
-    st.caption('How individual copy attributes affect CTR across all campaigns')
+    # ── Copy element cuts — 2 per row ──────────────────────────────────────────
+    st.markdown('<div class="section-header">Copy Element Performance</div>', unsafe_allow_html=True)
+    st.caption('How individual copy attributes affect CTR. Charts with only one bar are hidden (no variation to compare).')
 
-    col1, col2, col3 = st.columns(3)
-    cut_dims = [
-        ('emoji_count_bucket', 'CTR by Emoji Count', col1,
-         'How many emojis in the notification title?'),
-        ('title_length_bucket', 'CTR by Title Length', col2,
-         'Short (<30 chars), Medium (30-50), Long (>50)'),
-        ('has_specific_number', 'CTR: Has Specific Number?', col3,
-         'Campaigns mentioning exact ₹ or POPcoins amount'),
-        ('has_cultural_reference', 'CTR: Cultural Reference?', col1,
-         'Mentions of festivals, cricket, pop culture events'),
-        ('has_fomo_signal', 'CTR: FOMO Signal?', col2,
-         'Urgency language: "Today only", "Offer ends", "Limited"'),
-        ('has_personalisation', 'CTR: Personalised?', col3,
-         'Uses user name or personalized context'),
-        ('has_action_verb', 'CTR: Action Verb?', col1,
-         'Starts with or contains a strong verb: "Win", "Earn", "Get"'),
-        ('brand_guidelines_era', 'CTR: Pre vs Post June', col2,
-         'Campaigns before vs after the June brand book launch'),
-        ('is_weekend', 'CTR: Weekend vs Weekday', col3,
-         'Do weekend campaigns perform differently?'),
+    # Category order maps for known dimensions
+    CATEGORY_ORDERS = {
+        'emoji_count_bucket':   ['0', '1', '2+'],
+        'title_length_bucket':  ['Short', 'Medium', 'Long'],
+        'body_length_bucket':   ['Short', 'Medium', 'Long'],
+        'brand_guidelines_era': ['Pre-June', 'Post-June'],
+        'is_weekend':           ['False', 'True'],
+        'has_emoji':            ['False', 'True'],
+        'has_specific_number':  ['False', 'True'],
+        'has_action_verb':      ['False', 'True'],
+        'has_fomo_signal':      ['False', 'True'],
+        'has_cultural_reference': ['False', 'True'],
+        'has_personalisation':  ['False', 'True'],
+        'has_rich_media':       ['False', 'True'],
+        'day_of_month_bucket':  ['Payday Week', 'Rest of Month'],
+        'time_slot_bucket':     ['Dawn', 'Morning', 'Mid-day', 'Evening', 'Night'],
+    }
+
+    BOOL_LABELS = {
+        'True': 'Yes', 'False': 'No',
+        'Pre-June': 'Pre-June (Mar–May)', 'Post-June': 'Post-June (Jun+)',
+    }
+
+    CUT_DIMS = [
+        ('emoji_count_bucket',   'Emoji Count in Title',       '0 = no emoji, 1 = one emoji, 2+ = multiple'),
+        ('title_length_bucket',  'Title Length',               'Short ≤5 words, Medium 6–9 words, Long 10+'),
+        ('has_specific_number',  'Specific ₹ / POPcoins Amount', 'Does title/body state an exact value like ₹50 or 100 POPcoins?'),
+        ('has_action_verb',      'Action Verb in Title',       '"Win", "Earn", "Get", "Claim", "Pay" etc.'),
+        ('has_cultural_reference', 'Cultural / Event Reference', 'IPL, Diwali, Holi, Bollywood, cricket etc.'),
+        ('has_fomo_signal',      'Urgency / FOMO Language',    '"Last chance", "Expires", "Only today" etc.'),
+        ('has_personalisation',  'Personalisation',            'Copy uses "you" or "your" — targets the user directly'),
+        ('has_rich_media',       'Rich Media (Image)',         'Notification includes an image vs plain text only'),
+        ('brand_guidelines_era', 'Pre vs Post Brand Book (June)', 'Did CTR improve after the brand book launched in June?'),
+        ('is_weekend',           'Weekend vs Weekday',         'Do campaigns sent on weekends perform differently?'),
+        ('day_of_month_bucket',  'Payday Week vs Rest',        'Days 1–7 of month (salary period) vs rest of month'),
+        ('time_slot_bucket',     'Best Time Slot',             'Dawn 4–7am, Morning 7–10am, Mid-day 10–2pm, Evening 2–7pm, Night 7pm+'),
     ]
 
-    for dim, title, col, tooltip in cut_dims:
-        dim_df = copy_data[copy_data['dimension'] == dim] if 'dimension' in copy_data.columns else pd.DataFrame()
-        if not dim_df.empty:
-            with col:
-                st.caption(f'**{title}**')
-                st.caption(f'*{tooltip}*')
-                fig = px.bar(dim_df.sort_values('avg_ctr', ascending=False),
-                            x='dimension_value', y='avg_ctr',
-                            labels={'dimension_value': '', 'avg_ctr': 'Avg CTR (%)'},
-                            color='avg_ctr',
-                            color_continuous_scale='RdYlGn')
-                fig.update_layout(height=200, margin=dict(t=5, b=5, l=5, r=5),
-                                 showlegend=False, coloraxis_showscale=False)
-                st.plotly_chart(fig, use_container_width=True)
+    # Render in 2-column grid
+    dim_pairs = [(CUT_DIMS[i], CUT_DIMS[i+1] if i+1 < len(CUT_DIMS) else None) for i in range(0, len(CUT_DIMS), 2)]
 
-    st.markdown('---')
+    for left_dim, right_dim in dim_pairs:
+        cols = st.columns(2)
+        for idx, dim_info in enumerate([left_dim, right_dim]):
+            if dim_info is None:
+                continue
+            dim, title, tooltip = dim_info
+            if 'dimension' not in copy_data.columns:
+                continue
+            dim_df = copy_data[copy_data['dimension'] == dim].copy()
+            if dim_df.empty:
+                continue
+            dim_df['avg_ctr'] = pd.to_numeric(dim_df['avg_ctr'], errors='coerce').fillna(0)
+            dim_df['dimension_value'] = dim_df['dimension_value'].astype(str)
+
+            # Skip single-bar charts — no comparison possible
+            if len(dim_df) < 2:
+                with cols[idx]:
+                    st.markdown(f'<div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:2px">{title}</div>', unsafe_allow_html=True)
+                    st.caption(f'*{tooltip}*')
+                    st.info(f'Only one value found — no comparison available for this period/BU selection.')
+                continue
+
+            # Apply known category ordering
+            if dim in CATEGORY_ORDERS:
+                order = [v for v in CATEGORY_ORDERS[dim] if v in dim_df['dimension_value'].values]
+                if order:
+                    dim_df['dimension_value'] = pd.Categorical(dim_df['dimension_value'], categories=order, ordered=True)
+                    dim_df = dim_df.sort_values('dimension_value')
+            else:
+                dim_df = dim_df.sort_values('avg_ctr', ascending=False)
+
+            # Friendly labels for True/False
+            dim_df['label'] = dim_df['dimension_value'].astype(str).map(lambda v: BOOL_LABELS.get(v, v))
+
+            # Color: brand_guidelines_era gets special treatment; booleans get green/red
+            if dim == 'brand_guidelines_era':
+                bar_cols = ['#94a3b8' if 'Pre' in str(v) else '#4F46E5' for v in dim_df['dimension_value']]
+            elif dim in ('has_specific_number','has_action_verb','has_fomo_signal',
+                         'has_cultural_reference','has_personalisation','has_rich_media',
+                         'has_emoji','is_weekend'):
+                bar_cols = ['#ef4444' if 'No' in str(BOOL_LABELS.get(str(v), v)) or str(v) == 'False'
+                            else '#22c55e' for v in dim_df['dimension_value']]
+            else:
+                # Gradient: highest = green, lowest = red
+                ctrs = dim_df['avg_ctr'].tolist()
+                mx = max(ctrs) if ctrs else 1
+                bar_cols = ['#22c55e' if c == mx else ('#ef4444' if c == min(ctrs) else '#4F46E5') for c in ctrs]
+
+            fig_cut = go.Figure(go.Bar(
+                x=dim_df['label'],
+                y=dim_df['avg_ctr'],
+                marker_color=bar_cols,
+                text=dim_df['avg_ctr'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside',
+                textfont=dict(size=12),
+                hovertemplate='%{x}<br>CTR: %{y:.2f}%<extra></extra>',
+            ))
+            fig_cut.update_layout(
+                height=280,
+                margin=dict(t=30, b=10, l=5, r=5),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(showgrid=False, tickfont=dict(size=12), type='category'),
+                yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(size=11)),
+                showlegend=False,
+            )
+            with cols[idx]:
+                st.markdown(f'<div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:2px">{title}</div>', unsafe_allow_html=True)
+                st.caption(f'*{tooltip}*')
+                st.plotly_chart(fig_cut, use_container_width=True)
+
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
     # ── Top & Worst copy examples ─────────────────────────────────────────────
+    st.markdown('<div class="section-header">Best & Worst Performing Copy</div>', unsafe_allow_html=True)
+
     title_col = 'Android_Message_Title_Android_Web_Title_iOS'
     body_col  = 'Android_Message_Android_Web_Subtitle_iOS'
 
     if title_col in filtered_master.columns and 'All_Platform_CTR' in filtered_master.columns:
         master_copy = filtered_master.copy()
-        master_copy['All_Platform_CTR'] = pd.to_numeric(master_copy['All_Platform_CTR'], errors='coerce')
-        master_copy = master_copy.dropna(subset=['All_Platform_CTR'])
+        master_copy['All_Platform_CTR']  = pd.to_numeric(master_copy['All_Platform_CTR'], errors='coerce')
+        master_copy['All_Platform_Sent'] = pd.to_numeric(master_copy.get('All_Platform_Sent', 0), errors='coerce')
+        master_copy = master_copy[
+            (master_copy['All_Platform_Sent'] >= MIN_SENT_THRESHOLD) &
+            (master_copy['All_Platform_CTR'] <= 100) &
+            (master_copy['All_Platform_CTR'].notna())
+        ]
 
-        # Filter to campaigns with a reasonable number of sends
-        if 'All_Platform_Sent' in master_copy.columns:
-            master_copy['All_Platform_Sent'] = pd.to_numeric(master_copy['All_Platform_Sent'], errors='coerce')
-            master_copy['All_Platform_CTR']  = pd.to_numeric(master_copy['All_Platform_CTR'],  errors='coerce')
-            # Use same threshold as Top/Bottom ranking — excludes test campaigns with inflated CTR
-            master_copy = master_copy[master_copy['All_Platform_Sent'] >= MIN_SENT_THRESHOLD]
-            # Cap CTR at 100% — values above 100 indicate a data issue in MoEngage
-            master_copy = master_copy[master_copy['All_Platform_CTR'] <= 100]
-
-        col_top, col_bot = st.columns(2)
-
-        def _sent_fmt(v):
+        def _sfmt(v):
             try:
                 v = float(v)
-                if v >= 1_000_000: return f'{v/1_000_000:.1f}M'
-                if v >= 1_000: return f'{v/1_000:.0f}K'
-                return f'{v:,.0f}'
+                return f'{v/1_000_000:.1f}M' if v>=1e6 else (f'{v/1_000:.0f}K' if v>=1_000 else f'{v:,.0f}')
             except: return '—'
 
+        col_top, col_bot = st.columns(2)
         with col_top:
-            st.subheader('Top 3 Copy Examples')
-            st.caption(f'Highest CTR — min {MIN_SENT_THRESHOLD:,} sent, max 100% CTR')
+            st.markdown('<div style="font-size:14px;font-weight:700;color:#15803d;margin-bottom:8px">✅ Top 3 Campaigns by CTR</div>', unsafe_allow_html=True)
+            st.caption(f'Min {MIN_SENT_THRESHOLD:,} sent · max 100% CTR')
             top3 = master_copy.nlargest(3, 'All_Platform_CTR')
             for _, row in top3.iterrows():
-                ctr  = float(row.get('All_Platform_CTR', 0) or 0)
+                ctr = float(row.get('All_Platform_CTR', 0) or 0)
                 sent = row.get('All_Platform_Sent', 0)
-                title_text = str(row.get(title_col, '—'))
-                body_text  = str(row.get(body_col, '—'))
-                tonality   = str(row.get('tonality', '—'))
-                bu = str(row.get('bu', '—'))
-                with st.expander(f"✅ {ctr:.2f}% CTR — {bu}  ({_sent_fmt(sent)} sent)"):
-                    st.markdown(f"**Title:** {title_text}")
-                    st.markdown(f"**Body:** {body_text}")
-                    st.markdown(f"**Tonality:** `{tonality}`")
-                    diagnosis = auto_diagnosis(row, title_col, body_col)
-                    st.success(diagnosis)
+                with st.expander(f"✅ {ctr:.2f}% CTR — {row.get('bu','—')}  ({_sfmt(sent)} sent)"):
+                    st.markdown(f"**Title:** {str(row.get(title_col,'—'))}")
+                    st.markdown(f"**Body:** {str(row.get(body_col,'—'))}")
+                    st.markdown(f"**Tonality:** `{str(row.get('tonality','—'))}`")
+                    st.success(auto_diagnosis(row, title_col, body_col))
 
         with col_bot:
-            st.subheader('Worst 3 Copy Examples')
-            st.caption(f'Lowest CTR — min {MIN_SENT_THRESHOLD:,} sent, excludes 0% CTR (zero-click campaigns)')
-            # Exclude 0% CTR — those are likely delivery issues, not copy issues
+            st.markdown('<div style="font-size:14px;font-weight:700;color:#dc2626;margin-bottom:8px">❌ Worst 3 Campaigns by CTR</div>', unsafe_allow_html=True)
+            st.caption(f'Min {MIN_SENT_THRESHOLD:,} sent · excludes 0% CTR')
             worst_pool = master_copy[master_copy['All_Platform_CTR'] > 0]
             bot3 = worst_pool.nsmallest(3, 'All_Platform_CTR')
             for _, row in bot3.iterrows():
-                ctr  = float(row.get('All_Platform_CTR', 0) or 0)
+                ctr = float(row.get('All_Platform_CTR', 0) or 0)
                 sent = row.get('All_Platform_Sent', 0)
-                title_text = str(row.get(title_col, '—'))
-                body_text  = str(row.get(body_col, '—'))
-                tonality   = str(row.get('tonality', '—'))
-                bu = str(row.get('bu', '—'))
-                with st.expander(f"❌ {ctr:.2f}% CTR — {bu}  ({_sent_fmt(sent)} sent)"):
-                    st.markdown(f"**Title:** {title_text}")
-                    st.markdown(f"**Body:** {body_text}")
-                    st.markdown(f"**Tonality:** `{tonality}`")
-                    diagnosis = auto_diagnosis(row, title_col, body_col)
-                    st.error(diagnosis)
+                with st.expander(f"❌ {ctr:.2f}% CTR — {row.get('bu','—')}  ({_sfmt(sent)} sent)"):
+                    st.markdown(f"**Title:** {str(row.get(title_col,'—'))}")
+                    st.markdown(f"**Body:** {str(row.get(body_col,'—'))}")
+                    st.markdown(f"**Tonality:** `{str(row.get('tonality','—'))}`")
+                    st.error(auto_diagnosis(row, title_col, body_col))
+    else:
+        st.info('Campaign copy data not available.')
+
+    # ── Next steps ────────────────────────────────────────────────────────────
+    render_insight_box('Recommended next steps', [
+        "👉 **Filter by a specific BU** (sidebar) to see which copy styles work for that vertical — don't mix UPI and Shop insights",
+        "📖 **Go to Brand Guidelines Impact** to see whether brand-compliant copy is measurably outperforming non-compliant copy",
+        "🧪 **Go to A/B Testing Hub** to see which copy changes drove the biggest CTR lift in head-to-head tests",
+        "📋 **Action:** Use Top 3 copy examples above as brief templates for next week's campaigns",
+    ], box_type='success')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
