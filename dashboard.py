@@ -115,6 +115,9 @@ def compute_overall(master_df):
                 'primary_conversions', 'All_Platform_FCM_Delivery_Rate']:
         if col in master_df.columns:
             master_df[col] = pd.to_numeric(master_df[col], errors='coerce').fillna(0)
+    # Clip CTR outliers (5 data-quality rows with CTR > 100 in MoEngage export)
+    if 'All_Platform_CTR' in master_df.columns:
+        master_df['All_Platform_CTR'] = master_df['All_Platform_CTR'].clip(upper=100)
 
     agg = master_df.groupby('sent_month').agg(
         All_Platform_Sent=('All_Platform_Sent', 'sum'),
@@ -558,6 +561,7 @@ if page == '📊 Executive Overview':
             <span style="font-size:14px;color:#64748b;font-weight:500">{latest_month} · {bu_label} · {n_campaigns:,} campaigns</span>
         </div>
         """, unsafe_allow_html=True)
+        st.markdown('<p style="color:#64748b;font-size:13px;margin:4px 0 16px">Month-over-month PN performance across all BUs. Answers: are we growing volume while maintaining CTR quality?</p>', unsafe_allow_html=True)
 
         # ── HTML Metric Cards ─────────────────────────────────────────────────
         sent       = float(latest.get('All_Platform_Sent', 0) or 0)
@@ -768,17 +772,6 @@ if page == '📊 Executive Overview':
             'mom_All_Platform_Sent_delta_pct': 'Volume MOM Δ (%)',
         }
         tbl = tbl.rename(columns=rename_map)
-        def fmt_delta(v):
-            if v is None or (isinstance(v, float) and pd.isna(v)):
-                return '—'
-            try:
-                f = float(str(v).replace('%','').replace('+',''))
-                if pd.isna(f):
-                    return '—'
-                return f'{f:+.1f}%'
-            except:
-                return '—' if str(v) in ['None', 'nan', ''] else str(v)
-
         for delta_col in ['CTR MOM Δ (%)', 'Volume MOM Δ (%)']:
             if delta_col in tbl.columns:
                 tbl[delta_col] = tbl[delta_col].apply(fmt_delta)
@@ -848,6 +841,7 @@ elif page == '🏢 BU Performance':
         <span style="font-size:14px;color:#64748b;font-weight:500">{latest_month} · {n_bus} Business Units · MOM & WOW</span>
     </div>
     """, unsafe_allow_html=True)
+    st.markdown('<p style="color:#64748b;font-size:13px;margin:4px 0 16px">How each business unit compares on CTR, volume, and MOM/WOW trend. Answers: which BU needs attention this month?</p>', unsafe_allow_html=True)
 
     # ── BU Scorecard cards (latest month) ────────────────────────────────────
     if not monthly.empty and 'period_label' in monthly.columns:
@@ -1121,6 +1115,7 @@ elif page == '✍️ Copy Intelligence':
         <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle} · {total_campaigns:,} campaigns analysed</span>
     </div>
     """, unsafe_allow_html=True)
+    st.markdown('<p style="color:#64748b;font-size:13px;margin:4px 0 16px">What copy attributes drive the highest CTR — derived from your actual campaign data. Answers: what should the copy brief say next week?</p>', unsafe_allow_html=True)
 
     # ── Auto-insights ─────────────────────────────────────────────────────────
     copy_insights = insights_copy(copy_data)
@@ -1740,6 +1735,8 @@ elif page == '📖 Brand Guidelines Impact':
                 elif r >= 0.98: colours_comp.append('#4ade80')   # 98-99% → light green
                 elif r >= 0.95: colours_comp.append('#f59e0b')   # 95-97% → amber
                 else: colours_comp.append('#ef4444')              # <95% → red
+            min_reach = post_bu_comp['compliance_rate'].min() if not post_bu_comp.empty else 0.9
+            y_min = max(0, min_reach - 0.05)
             fig_buc = go.Figure(go.Bar(
                 x=post_bu_comp['bu'], y=post_bu_comp['compliance_rate'],
                 marker_color=colours_comp,
@@ -1752,10 +1749,10 @@ elif page == '📖 Brand Guidelines Impact':
                 margin=dict(t=30, b=10, l=10, r=10),
                 plot_bgcolor='white', paper_bgcolor='white',
                 xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
-                yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickformat='.0%', range=[0.93, 1.05]),
+                yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickformat='.0%', range=[y_min, 1.05]),
             )
             st.plotly_chart(fig_buc, use_container_width=True)
-            st.caption('🟢 ≥80% compliant  🟡 50–79%  🔴 <50%')
+            st.caption('Color thresholds: 🟢 ≥99% compliant (all brand guidelines followed) · 🟡 95–98% (minor gaps) · 🔴 <95% (needs attention)')
 
     # ── Next steps ────────────────────────────────────────────────────────────
     render_insight_box('Recommended next steps', [
