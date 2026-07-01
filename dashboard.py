@@ -2654,15 +2654,35 @@ elif page == '📦 Segment Intelligence':
             seg_type = 'Other'
             seg_clean = f[:40]
 
-        # Lifecycle classification
+        # Lifecycle classification — check segment filters first
         lifecycle = 'Unknown'
         for kw, label in LIFECYCLE_KEYWORDS.items():
             if kw.lower() in f.lower():
                 lifecycle = label
                 break
+
+        # Fallback 1: segment type signals
         if lifecycle == 'Unknown':
             if seg_type == 'Broadcast': lifecycle = 'Retention (Broad)'
             elif seg_type == 'Behavioral': lifecycle = 'Retention (Behavioral Trigger)'
+
+        # Fallback 2: use BU + Campaign Name to resolve remaining Unknown
+        # The user confirmed: Unknown = mostly Shop Acquisition (PROMO campaigns)
+        if lifecycle == 'Unknown':
+            bu_val = str(row.get('bu', '') or '')
+            camp_name = str(row.get('Campaign_Name', '') or '').upper()
+            if 'PROMO' in camp_name or bu_val == 'Shop':
+                lifecycle = 'Acquisition (Commerce/Shop)'
+            elif 'Acquisition' in bu_val:
+                lifecycle = 'Acquisition (New to Product)'
+            elif 'Retention' in bu_val or 'Activation' in bu_val:
+                lifecycle = 'Retention (Existing User)'
+            elif bu_val == 'RCBP':
+                lifecycle = 'Retention (Bill Payment)'
+            elif bu_val == 'POPchop':
+                lifecycle = 'Activation (POPchop)'
+            else:
+                lifecycle = 'Acquisition (Commerce/Shop)'  # default for remaining unknowns
 
         return pd.Series({'seg_type': seg_type, 'seg_clean': seg_clean, 'lifecycle': lifecycle})
 
