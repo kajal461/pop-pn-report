@@ -292,6 +292,118 @@ def auto_diagnosis(row, title_col, body_col):
     return "No strong positive signals detected"
 
 
+import re as _re
+
+def _md_bold_to_html(text):
+    """Convert **markdown bold** to <strong> HTML tags."""
+    return _re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', str(text))
+
+
+def generate_copy_rules(copy_data: pd.DataFrame) -> list:
+    """
+    Generate actionable copy rules from the copy analysis data.
+    Each rule is a dict: {rule, evidence, impact, action}
+    """
+    rules = []
+    if copy_data.empty or 'dimension' not in copy_data.columns:
+        return rules
+
+    def get_best_worst(dim):
+        sub = copy_data[copy_data['dimension'] == dim].copy()
+        if sub.empty or len(sub) < 2: return None, None, None, None
+        sub['avg_ctr'] = pd.to_numeric(sub['avg_ctr'], errors='coerce')
+        sub = sub.dropna(subset=['avg_ctr'])
+        if sub.empty: return None, None, None, None
+        best = sub.loc[sub['avg_ctr'].idxmax()]
+        worst = sub.loc[sub['avg_ctr'].idxmin()]
+        diff = best['avg_ctr'] - worst['avg_ctr']
+        return best['dimension_value'], best['avg_ctr'], worst['dimension_value'], diff
+
+    # Emoji count rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('emoji_count_bucket')
+    if diff and diff >= 0.05:
+        rules.append({
+            'rule': 'Use **' + str(best_v) + ' emoji** in your PN title',
+            'evidence': str(best_v) + ' emoji → ' + f'{best_ctr:.2f}% CTR (best performing)',
+            'impact': '+' + f'{diff:.2f}% vs the worst emoji count',
+            'action': 'Audit next week campaigns: make sure titles have ' + str(best_v) + ' emoji',
+        })
+
+    # Title length rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('title_length_bucket')
+    if diff and diff >= 0.05:
+        rules.append({
+            'rule': 'Write **' + str(best_v) + '** titles (avoid ' + str(worst_v) + ')',
+            'evidence': str(best_v) + ' titles → ' + f'{best_ctr:.2f}% CTR',
+            'impact': '+' + f'{diff:.2f}% vs {worst_v} titles',
+            'action': 'Before sending, check word count: Short ≤5 words, Medium 6–9, Long 10+',
+        })
+
+    # Specific number rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('has_specific_number')
+    if diff and diff >= 0.05:
+        has_better = best_v == 'True'
+        num_rule = 'Always state a specific ₹ amount or POPcoins value' if has_better else "Don't force a number if the value isn't clear"
+        num_with = 'with' if has_better else 'without'
+        rules.append({
+            'rule': num_rule,
+            'evidence': 'Campaigns ' + num_with + ' a specific number → ' + f'{best_ctr:.2f}% CTR',
+            'impact': '+' + f'{diff:.2f}% difference',
+            'action': 'Examples: "₹250 off", "100 POPcoins" — avoid "big rewards" or "great savings"',
+        })
+
+    # Action verb rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('has_action_verb')
+    if diff and diff >= 0.05:
+        has_better = best_v == 'True'
+        verb_rule = 'Start titles with an action verb (Win/Earn/Get/Claim)' if has_better else "Don't force action verbs if copy feels unnatural"
+        rules.append({
+            'rule': verb_rule,
+            'evidence': 'Action verb titles → ' + f'{best_ctr:.2f}% CTR',
+            'impact': '+' + f'{diff:.2f}% difference',
+            'action': 'Preferred verbs: Win, Earn, Claim, Get, Grab, Save',
+        })
+
+    # FOMO rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('has_fomo_signal')
+    if diff and diff >= 0.05:
+        has_better = best_v == 'True'
+        fomo_rule = 'Use urgency signals sparingly — they help' if has_better else "Avoid overusing urgency/FOMO — it's not working"
+        rules.append({
+            'rule': fomo_rule,
+            'evidence': 'FOMO campaigns → ' + f'{best_ctr:.2f}% CTR',
+            'impact': '+' + f'{diff:.2f}% difference',
+            'action': '"Last chance", "Expires tonight", "Only today" — use max 1–2x per week per BU',
+        })
+
+    # Cultural reference rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('has_cultural_reference')
+    if diff and diff >= 0.05:
+        has_better = best_v == 'True'
+        cult_rule = 'Tie campaigns to cultural moments (IPL, Diwali, etc.)' if has_better else "Cultural references aren't driving CTR in this period"
+        rules.append({
+            'rule': cult_rule,
+            'evidence': 'Cultural ref campaigns → ' + f'{best_ctr:.2f}% CTR',
+            'impact': '+' + f'{diff:.2f}% difference',
+            'action': 'Plan campaigns around cricket matches, festivals, payday week',
+        })
+
+    # Brand era rule
+    best_v, best_ctr, worst_v, diff = get_best_worst('brand_guidelines_era')
+    if diff and diff >= 0.05:
+        post_better = best_v == 'Post-June'
+        brand_status = 'is' if post_better else 'is not yet'
+        brand_era = 'Post-June' if post_better else 'Pre-June'
+        rules.append({
+            'rule': 'Brand book ' + brand_status + ' improving CTR',
+            'evidence': brand_era + ' campaigns → ' + f'{best_ctr:.2f}% CTR',
+            'impact': f'{diff:+.2f}% since June (note: scale-up effect also present)',
+            'action': 'See Brand Guidelines Impact page for full analysis',
+        })
+
+    return rules
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1020,6 +1132,39 @@ elif page == '✍️ Copy Intelligence':
         render_insight_box(f'Key learnings from {total_campaigns:,} campaigns', copy_insights)
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
+    # ── Actionable Copy Rules ─────────────────────────────────────────────────
+    st.markdown('<div class="section-header">📋 Copy Rules — What the Data Says to Do</div>', unsafe_allow_html=True)
+    st.caption('Derived from analysis of all campaigns. These are the highest-impact changes your copy team can make.')
+
+    rules = generate_copy_rules(copy_data)
+    if rules:
+        for i, rule in enumerate(rules, 1):
+            impact_colour = '#22c55e' if '+' in str(rule.get('impact', '')) else '#f59e0b'
+            st.markdown(f"""
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;
+                        padding:14px 18px;margin-bottom:10px;border-left:4px solid {impact_colour}">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                    <div style="font-size:14px;font-weight:700;color:#0f172a">
+                        Rule {i}: {_md_bold_to_html(rule['rule'])}
+                    </div>
+                    <span style="background:#f1f5f9;color:#475569;padding:2px 10px;border-radius:999px;
+                                 font-size:11px;font-weight:600;white-space:nowrap;margin-left:12px">
+                        {rule['impact']}
+                    </span>
+                </div>
+                <div style="font-size:12px;color:#64748b;margin-top:6px">
+                    📊 <em>{rule['evidence']}</em>
+                </div>
+                <div style="font-size:13px;color:#1e40af;margin-top:8px;font-weight:600">
+                    👉 Action: {rule['action']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info('Not enough data variation to generate rules. Try selecting all BUs and all months.')
+
+    st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+
     # ── Tonality chart — full width ───────────────────────────────────────────
     st.markdown('<div class="section-header">CTR by Tonality — DO vs DON\'T Brand Voice</div>', unsafe_allow_html=True)
 
@@ -1136,6 +1281,17 @@ elif page == '✍️ Copy Intelligence':
                     st.info(f'Only one value found — no comparison available for this period/BU selection.')
                 continue
 
+            # Skip charts where CTR difference between best and worst is < 0.05% (noise, not signal)
+            ctr_range = dim_df['avg_ctr'].max() - dim_df['avg_ctr'].min()
+            if ctr_range < 0.05:
+                with cols[idx]:
+                    st.markdown(f'<div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:2px">{title}</div>', unsafe_allow_html=True)
+                    st.caption(f'*{tooltip}*')
+                    best_val = dim_df.loc[dim_df['avg_ctr'].idxmax(), 'dimension_value']
+                    best_ctr = dim_df['avg_ctr'].max()
+                    st.caption(f'📊 Difference < 0.05% — no meaningful CTR impact. Best: **{best_val}** ({best_ctr:.2f}%)')
+                continue
+
             # Apply known category ordering
             if dim in CATEGORY_ORDERS:
                 order = [v for v in CATEGORY_ORDERS[dim] if v in dim_df['dimension_value'].values]
@@ -1183,6 +1339,19 @@ elif page == '✍️ Copy Intelligence':
                 st.markdown(f'<div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:2px">{title}</div>', unsafe_allow_html=True)
                 st.caption(f'*{tooltip}*')
                 st.plotly_chart(fig_cut, use_container_width=True)
+                # Auto-generated takeaway
+                if len(dim_df) >= 2:
+                    best_row  = dim_df.loc[dim_df['avg_ctr'].idxmax()]
+                    worst_row = dim_df.loc[dim_df['avg_ctr'].idxmin()]
+                    diff_v = best_row['avg_ctr'] - worst_row['avg_ctr']
+                    takeaway_col = '#16a34a' if diff_v >= 0.1 else '#64748b'
+                    st.markdown(
+                        f'<div style="font-size:11px;color:{takeaway_col};margin-top:-8px;padding:4px 0">'
+                        f'✓ Best: <strong>{best_row["dimension_value"]}</strong> ({best_row["avg_ctr"]:.2f}%) '
+                        f'vs worst: {worst_row["dimension_value"]} ({worst_row["avg_ctr"]:.2f}%) '
+                        f'— Δ {diff_v:+.2f}%</div>',
+                        unsafe_allow_html=True
+                    )
 
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
