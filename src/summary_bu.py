@@ -9,12 +9,14 @@ SUM_COLS = {COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, 'primary_conversi
 
 
 def _aggregate(master: pd.DataFrame, period_col: str) -> pd.DataFrame:
+    # Support both raw pipeline column names (spaces) and BigQuery sanitized names (underscores)
+    camp_id_col = 'Campaign_ID' if 'Campaign_ID' in master.columns else 'Campaign ID'
     agg_dict = {
         col: (col, 'sum' if col in SUM_COLS else 'mean')
         for col in METRIC_COLS if col in master.columns
     }
-    agg_dict['campaign_count'] = ('Campaign ID', 'nunique')
-    agg_dict['ab_test_count']  = ('is_ab_test', 'sum')
+    agg_dict['campaign_count'] = (camp_id_col, 'nunique')
+    agg_dict['ab_test_count']  = ('is_ab_test', 'sum') if 'is_ab_test' in master.columns else ('bu', 'count')
     if 'conversion_tracked' in master.columns:
         agg_dict['tracked_campaigns']      = ('conversion_tracked', 'sum')
         agg_dict['avg_click_to_convert']   = ('click_to_convert_rate', 'mean')

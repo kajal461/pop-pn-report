@@ -19,7 +19,8 @@ def build_summary_overall(master: pd.DataFrame) -> pd.DataFrame:
         col: (col, 'sum' if col in SUM_COLS else 'mean')
         for col in METRIC_COLS if col in master.columns
     }
-    agg_dict['campaign_count'] = ('Campaign ID', 'nunique')
+    camp_id_col = 'Campaign_ID' if 'Campaign_ID' in master.columns else 'Campaign ID'
+    agg_dict['campaign_count'] = (camp_id_col, 'nunique')
 
     monthly = (
         master.groupby('sent_month')
