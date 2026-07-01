@@ -1962,11 +1962,16 @@ elif page == '🏆 Top & Bottom Campaigns':
             return f'{v/1_000_000:.1f}M' if v>=1e6 else (f'{v/1_000:.0f}K' if v>=1_000 else f'{v:,.0f}')
         except: return '—'
 
+    # Compute BU average CTR for context notes
+    bu_avg_ctr = {}
+    if 'bu' in eligible_camp.columns and 'All_Platform_CTR' in eligible_camp.columns:
+        bu_avg_ctr = eligible_camp.groupby('bu')['All_Platform_CTR'].mean().to_dict()
+
     def _campaign_card(row, rank_type='Top'):
         border = '#22c55e' if rank_type == 'Top' else '#ef4444'
         icon   = '🟢' if rank_type == 'Top' else '🔴'
         ctr    = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce') or 0
-        sent   = row.get('All_Platform_Sent', 0)
+        sent   = float(row.get('All_Platform_Sent', 0) or 0)
         clicks = row.get('All_Platform_Clicks', 0)
         rank   = row.get('rank', '?')
         bu     = str(row.get('bu', '—'))
@@ -1976,22 +1981,67 @@ elif page == '🏆 Top & Bottom Campaigns':
         brand  = row.get('brand_compliant', False)
         diag   = auto_diagnosis(row, title_col, body_col)
         conv   = float(row.get('primary_conversions', 0) or 0)
+        n_var  = int(row.get('n_variations', 1) or 1)
         conv_html = ('<span>🎯 ' + _sfmt(conv) + ' converted</span>') if conv > 0 else ''
         rank_str  = str(int(rank)) if pd.notna(rank) and str(rank) not in ('—', '?', 'nan') else '?'
         badge     = _brand_badge(brand)
 
-        # Build HTML using string concatenation to avoid f-string nesting issues
+        # Context note — explains WHY the CTR is high or low
+        bu_avg = bu_avg_ctr.get(bu, None)
+        context_parts = []
+
+        # Scale context
+        if sent < 5000:
+            context_parts.append(
+                '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-size:10px">'
+                '⚠️ Small audience (' + _sfmt(sent) + ' sends) — CTR may not generalise at larger scale'
+                '</span>'
+            )
+        elif sent >= 20000:
+            context_parts.append(
+                '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-size:10px">'
+                '✅ Large audience (' + _sfmt(sent) + ' sends) — CTR is statistically reliable'
+                '</span>'
+            )
+        else:
+            context_parts.append(
+                '<span style="background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:4px;font-size:10px">'
+                '📊 Mid-size audience (' + _sfmt(sent) + ' sends)'
+                '</span>'
+            )
+
+        # BU benchmark comparison
+        if bu_avg and bu_avg > 0:
+            vs_avg = ctr - bu_avg
+            vs_sign = '+' if vs_avg >= 0 else ''
+            vs_col = '#15803d' if vs_avg >= 0 else '#dc2626'
+            context_parts.append(
+                '<span style="color:' + vs_col + ';font-size:10px;font-weight:600">'
+                + vs_sign + f'{vs_avg:.2f}% vs {bu} avg ({bu_avg:.2f}%)'
+                '</span>'
+            )
+
+        # A/B note
+        if n_var > 1:
+            context_parts.append(
+                '<span style="color:#7c3aed;font-size:10px">'
+                '🧪 CTR combined from ' + str(n_var) + ' A/B variations'
+                '</span>'
+            )
+
+        context_html = ' &nbsp;·&nbsp; '.join(context_parts) if context_parts else ''
+
         html = (
             '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;'
             'padding:16px 20px;margin-bottom:12px;border-left:4px solid ' + border + '">'
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
             '<span style="font-size:12px;color:#64748b;font-weight:700">' + icon + ' #' + rank_str + ' · ' + bu + '</span>'
             '<span style="font-size:22px;font-weight:800;color:#0f172a">' + f'{ctr:.2f}%' + ' <span style="font-size:11px;color:#94a3b8">CTR</span></span>'
             '</div>'
+            + ('<div style="margin-bottom:8px">' + context_html + '</div>' if context_html else '') +
             '<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px">&ldquo;' + title + '&rdquo;</div>'
             '<div style="font-size:12px;color:#475569;margin-bottom:10px">' + body + '</div>'
             '<div style="display:flex;gap:16px;font-size:11px;color:#64748b;margin-bottom:8px">'
-            '<span>📤 ' + _sfmt(sent) + ' sent</span>'
             '<span>👆 ' + _sfmt(clicks) + ' clicks</span>'
             + conv_html +
             '</div>'
