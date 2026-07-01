@@ -1240,110 +1240,264 @@ elif page == '✍️ Copy Intelligence':
 # PAGE 4 — BRAND GUIDELINES IMPACT
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '📖 Brand Guidelines Impact':
-    st.title('📖 Brand Guidelines Impact')
+    from src.brand_impact_builder import build_brand_impact as _build_brand
 
-    # Clear explanation of brand compliance
-    st.info("""
-    **What is brand compliance?**
-    Brand compliance means a campaign's copy follows the **DO labels** from the POP brand book
-    (*Smart & Sharp*, *Relatable & Warm*) and avoids **DON'T patterns**
-    (*Corporate Jargon*, *Forced Gen-Z*, *Pushy Sales*, etc.).
+    # Recompute from master if any filter active
+    if bu_filtered or period_filtered:
+        bi = _build_brand(filtered_master)
+    else:
+        bi = brand_impact.copy()
 
-    The brand book was launched in **June 2025**. This page measures whether it has improved
-    notification performance since then.
-    """)
+    # Normalize column names (BigQuery underscore → space format for internal use)
+    for col in list(bi.columns):
+        space = col.replace('_', ' ')
+        if col not in bi.columns or space not in bi.columns:
+            pass  # already handled by brand_impact_builder
 
-    # Era comparison headline
-    era_month = brand_impact[brand_impact['table_type'] == 'era_month'] if 'table_type' in brand_impact.columns else pd.DataFrame()
+    era_month     = bi[bi['table_type'] == 'era_month'].copy()     if 'table_type' in bi.columns else pd.DataFrame()
+    era_bu        = bi[bi['table_type'] == 'era_bu'].copy()        if 'table_type' in bi.columns else pd.DataFrame()
+    compliance_df = bi[bi['table_type'] == 'compliance_comparison'].copy() if 'table_type' in bi.columns else pd.DataFrame()
 
-    if not era_month.empty:
-        pre_rows = era_month[era_month['brand_guidelines_era'] == 'Pre-June']
-        post_rows = era_month[era_month['brand_guidelines_era'] == 'Post-June']
-        pre  = pre_rows['avg_ctr'].mean() if not pre_rows.empty else None
-        post = post_rows['avg_ctr'].mean() if not post_rows.empty else None
-        delta = post - pre if pd.notna(pre) and pd.notna(post) else None
+    for df_ in [era_month, era_bu, compliance_df]:
+        if 'avg_ctr' in df_.columns:
+            df_['avg_ctr'] = pd.to_numeric(df_['avg_ctr'], errors='coerce')
+        if 'compliance_rate' in df_.columns:
+            df_['compliance_rate'] = pd.to_numeric(df_['compliance_rate'], errors='coerce')
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric('Pre-June Avg CTR', f'{pre:.2f}%' if pd.notna(pre) else '—',
-                  help='Average CTR across all campaigns before June 2025')
-        c2.metric('Post-June Avg CTR', f'{post:.2f}%' if pd.notna(post) else '—',
-                  delta=f'{delta:+.2f}%' if delta is not None and pd.notna(delta) else None,
-                  help='Average CTR after the brand book launched')
-        if not post_rows.empty and 'compliance_rate' in post_rows.columns:
-            comp = post_rows['compliance_rate'].mean()
-            c3.metric('Post-June Compliance Rate', f'{comp*100:.0f}%' if pd.notna(comp) else '—',
-                     help='% of post-June campaigns that use DO tones')
+    # Headline numbers
+    pre_rows  = era_month[era_month['brand_guidelines_era'] == 'Pre-June']  if not era_month.empty else pd.DataFrame()
+    post_rows = era_month[era_month['brand_guidelines_era'] == 'Post-June'] if not era_month.empty else pd.DataFrame()
+
+    # Use send-weighted average across all months (not average of monthly averages)
+    if not pre_rows.empty and 'avg_ctr' in pre_rows.columns and 'campaign_count' in pre_rows.columns:
+        pre_rows['campaign_count'] = pd.to_numeric(pre_rows['campaign_count'], errors='coerce').fillna(1)
+        pre_ctr = (pre_rows['avg_ctr'] * pre_rows['campaign_count']).sum() / pre_rows['campaign_count'].sum()
+    else:
+        pre_ctr = None
+
+    if not post_rows.empty and 'avg_ctr' in post_rows.columns and 'campaign_count' in post_rows.columns:
+        post_rows['campaign_count'] = pd.to_numeric(post_rows['campaign_count'], errors='coerce').fillna(1)
+        post_ctr = (post_rows['avg_ctr'] * post_rows['campaign_count']).sum() / post_rows['campaign_count'].sum()
+        post_compliance = post_rows['compliance_rate'].mean() if 'compliance_rate' in post_rows.columns else None
+        pre_compliance  = pre_rows['compliance_rate'].mean()  if not pre_rows.empty and 'compliance_rate' in pre_rows.columns else None
+    else:
+        post_ctr = None
+        post_compliance = None
+        pre_compliance  = None
+
+    delta_ctr = post_ctr - pre_ctr if pre_ctr and post_ctr and pd.notna(pre_ctr) and pd.notna(post_ctr) else None
+
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(m, m) for m in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">📖 Brand Guidelines Impact</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 18px;margin:12px 0 16px">
+        <strong style="color:#1e40af">What is brand compliance?</strong>
+        Brand compliance means a campaign's copy follows the <strong>DO labels</strong> from the POP brand book
+        (<em>Smart — Simple, Value-aware, Unique</em> and <em>Relatable — Friendly, Youthful, Helpful</em>)
+        and avoids <strong>DON'T patterns</strong> (<em>Corporate Jargon, Forced Gen-Z, Vague, Cliche, Condescending, Lecture-y</em>).
+        <br><br>
+        The brand book launched in <strong>June 2026</strong>. This page measures whether it improved PN performance.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── HTML Metric Cards ─────────────────────────────────────────────────────
+    def delta_html(val):
+        if val is None or pd.isna(val): return '<span style="color:#94a3b8">—</span>'
+        colour = '#22c55e' if val > 0 else '#ef4444'
+        arrow  = '↑' if val > 0 else '↓'
+        return f'<span style="color:{colour};font-weight:700">{arrow}{abs(val):.2f}% vs Pre-June</span>'
+
+    pre_camp  = int(pre_rows['campaign_count'].sum())  if not pre_rows.empty  and 'campaign_count' in pre_rows.columns  else 0
+    post_camp = int(post_rows['campaign_count'].sum()) if not post_rows.empty and 'campaign_count' in post_rows.columns else 0
+
+    cards_html = f"""
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0">
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #94a3b8">
+            <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Pre-June CTR (Mar–May)</div>
+            <div style="font-size:30px;font-weight:800;color:#0f172a;margin:8px 0 2px">{f"{pre_ctr:.2f}%" if pre_ctr and pd.notna(pre_ctr) else "—"}</div>
+            <div style="font-size:11px;color:#94a3b8">{pre_camp:,} campaigns</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">Campaign-weighted average</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid {'#ef4444' if delta_ctr and delta_ctr < 0 else '#22c55e'}">
+            <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Post-June CTR (Jun+)</div>
+            <div style="font-size:30px;font-weight:800;color:#0f172a;margin:8px 0 2px">{f"{post_ctr:.2f}%" if post_ctr and pd.notna(post_ctr) else "—"}</div>
+            <div style="font-size:12px">{delta_html(delta_ctr)}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px">{post_camp:,} campaigns</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #22c55e">
+            <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Post-June Compliance</div>
+            <div style="font-size:30px;font-weight:800;color:#0f172a;margin:8px 0 2px">{f"{post_compliance*100:.0f}%" if post_compliance and pd.notna(post_compliance) else "—"}</div>
+            <div style="font-size:11px;color:#94a3b8">% of campaigns following brand book</div>
+        </div>
+        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #f59e0b">
+            <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Pre-June Compliance</div>
+            <div style="font-size:30px;font-weight:800;color:#0f172a;margin:8px 0 2px">{f"{pre_compliance*100:.0f}%" if pre_compliance and pd.notna(pre_compliance) else "—"}</div>
+            <div style="font-size:11px;color:#94a3b8">Before brand book launched</div>
+        </div>
+    </div>
+    """
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+    # ── Scale-up context note ─────────────────────────────────────────────────
+    if delta_ctr and delta_ctr < 0:
+        st.markdown("""
+        <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:12px 16px;margin:8px 0">
+            <strong style="color:#854d0e">⚠️ Context: CTR drop ≠ Brand book not working</strong><br>
+            <span style="font-size:13px;color:#713f12">Campaign volume grew 5x from April to May–June (scale-up effect).
+            More campaigns at scale naturally dilutes average CTR — this is expected and separate from brand voice quality.
+            To isolate the brand book's impact, compare <strong>compliant vs non-compliant campaigns within the same period</strong> (see chart below).</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Auto-insights ─────────────────────────────────────────────────────────
+    brand_insights = insights_brand(bi)
+    if brand_insights:
+        render_insight_box('Is the brand book working?', brand_insights)
+
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+    # ── NEW: Per-BU Pre vs Post CTR comparison ─────────────────────────────────
+    st.markdown('<div class="section-header">Pre vs Post June CTR — By BU</div>', unsafe_allow_html=True)
+    st.caption('The most important chart: did each BU improve after the brand book launched?')
+
+    if not era_bu.empty and 'bu' in era_bu.columns and 'avg_ctr' in era_bu.columns:
+        if selected_bus:
+            era_bu = era_bu[era_bu['bu'].isin(selected_bus)]
+
+        pivot = era_bu.pivot(index='bu', columns='brand_guidelines_era', values='avg_ctr').reset_index()
+        pivot.columns.name = None
+
+        pre_col  = 'Pre-June'  if 'Pre-June'  in pivot.columns else None
+        post_col = 'Post-June' if 'Post-June' in pivot.columns else None
+
+        if pre_col and post_col:
+            pivot['delta'] = pivot[post_col] - pivot[pre_col]
+            pivot = pivot.sort_values('delta', ascending=False)
+
+            fig_bu = go.Figure()
+            fig_bu.add_trace(go.Bar(
+                name='Pre-June (Mar–May)',
+                x=pivot['bu'], y=pivot[pre_col],
+                marker_color='#cbd5e1',
+                text=pivot[pre_col].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—'),
+                textposition='outside',
+                textfont=dict(size=11),
+            ))
+            fig_bu.add_trace(go.Bar(
+                name='Post-June (Jun+)',
+                x=pivot['bu'], y=pivot[post_col],
+                marker_color='#4F46E5',
+                text=pivot[post_col].apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—'),
+                textposition='outside',
+                textfont=dict(size=11),
+            ))
+            # Add delta annotation on each BU
+            for _, row in pivot.iterrows():
+                if pd.notna(row.get('delta')):
+                    colour = '#16a34a' if row['delta'] > 0 else '#dc2626'
+                    sign   = '+' if row['delta'] > 0 else ''
+                    fig_bu.add_annotation(
+                        x=row['bu'],
+                        y=max(row.get(pre_col, 0) or 0, row.get(post_col, 0) or 0) + 0.3,
+                        text=f"{sign}{row['delta']:.2f}%",
+                        showarrow=False,
+                        font=dict(size=11, color=colour, family='sans-serif'),
+                    )
+
+            fig_bu.update_layout(
+                height=420,
+                barmode='group',
+                margin=dict(t=40, b=20, l=10, r=10),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+                yaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            )
+            st.plotly_chart(fig_bu, use_container_width=True)
+            st.caption('Sorted by CTR change (best improvement → most declined). Delta shown above each BU pair.')
         else:
-            c3.metric('Improvement', f'{delta:+.2f}%' if delta is not None and pd.notna(delta) else '—')
+            st.info('Pre-June or Post-June data not available for comparison.')
+    else:
+        st.info('BU-level data not available.')
 
-        # ── Auto-insights ─────────────────────────────────────────────────────
-        brand_insights = insights_brand(brand_impact)
-        if brand_insights:
-            render_insight_box('Is the brand book working?', brand_insights)
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-        st.markdown('---')
+    # ── DO vs DON'T CTR ──────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">DO vs DON\'T Tone — CTR Comparison</div>', unsafe_allow_html=True)
+    st.caption('Does brand-compliant copy (DO labels) outperform non-compliant copy (DON\'T labels)?')
 
-        # ── Monthly CTR trend ─────────────────────────────────────────────────
-        st.subheader('Monthly CTR: Pre vs Post Brand Guidelines')
-        x_col = 'sent_month' if 'sent_month' in era_month.columns else 'period_label'
-        if x_col in era_month.columns:
-            fig = px.bar(era_month.sort_values(x_col),
-                        x=x_col, y='avg_ctr', color='brand_guidelines_era',
-                        barmode='group',
-                        color_discrete_map={'Pre-June': '#94a3b8', 'Post-June': '#4F46E5'},
-                        labels={x_col: 'Month', 'avg_ctr': 'Avg CTR (%)', 'brand_guidelines_era': 'Era'})
-            fig.update_layout(height=350, plot_bgcolor='#fafafa', paper_bgcolor='white')
-            st.plotly_chart(fig, use_container_width=True)
+    if not compliance_df.empty and 'brand_compliant' in compliance_df.columns:
+        compliance_df['label'] = compliance_df['brand_compliant'].apply(
+            lambda x: '✅ Brand Compliant (DO)' if str(x).lower() in ('true', '1', 'yes') else "❌ Non-Compliant (DON'T)"
+        )
+        fig_comp = go.Figure()
+        for era, colour in [('Pre-June', '#cbd5e1'), ('Post-June', '#4F46E5')]:
+            sub = compliance_df[compliance_df['brand_guidelines_era'] == era]
+            if sub.empty: continue
+            fig_comp.add_trace(go.Bar(
+                name=era, x=sub['label'], y=sub['avg_ctr'],
+                marker_color=colour,
+                text=sub['avg_ctr'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside',
+                textfont=dict(size=12),
+            ))
+        fig_comp.update_layout(
+            height=320, barmode='group',
+            margin=dict(t=20, b=10, l=10, r=10),
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+            yaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        )
+        st.plotly_chart(fig_comp, use_container_width=True)
 
-        # ── Compliance trend ──────────────────────────────────────────────────
-        if 'compliance_rate' in era_month.columns and x_col in era_month.columns:
-            st.subheader('Brand Compliance Rate — Monthly Trend')
-            comp_trend = era_month[era_month['brand_guidelines_era'] == 'Post-June'].copy()
-            if not comp_trend.empty:
-                fig_comp = px.line(comp_trend.sort_values(x_col),
-                                  x=x_col, y='compliance_rate',
-                                  markers=True,
-                                  labels={x_col: 'Month', 'compliance_rate': 'Compliance Rate'},
-                                  color_discrete_sequence=['#22c55e'])
-                fig_comp.update_traces(line_width=3, marker_size=8)
-                fig_comp.update_layout(height=280, yaxis_tickformat='.0%',
-                                      plot_bgcolor='#fafafa', paper_bgcolor='white')
-                st.plotly_chart(fig_comp, use_container_width=True)
+    # ── Compliance rate by BU ─────────────────────────────────────────────────
+    st.markdown('<div class="section-header" style="margin-top:8px">Brand Compliance Rate — by BU (Post-June)</div>', unsafe_allow_html=True)
+    st.caption('What % of each BU\'s campaigns follow the brand book guidelines?')
 
-    # ── DO vs DON'T CTR comparison ────────────────────────────────────────────
-    compliance = brand_impact[brand_impact['table_type'] == 'compliance_comparison'] if 'table_type' in brand_impact.columns else pd.DataFrame()
-    if not compliance.empty:
-        st.subheader("DO vs DON'T — CTR Comparison")
-        st.caption("Brand-compliant (DO tone) campaigns vs non-compliant (DON'T tone) campaigns")
-        fig2 = px.bar(compliance, x='brand_compliant', y='avg_ctr',
-                     color='brand_guidelines_era',
-                     barmode='group',
-                     labels={'brand_compliant': 'Brand Compliant', 'avg_ctr': 'Avg CTR (%)',
-                             'brand_guidelines_era': 'Period'},
-                     color_discrete_map={'Pre-June': '#94a3b8', 'Post-June': '#4F46E5'})
-        fig2.update_layout(height=320, plot_bgcolor='#fafafa', paper_bgcolor='white')
-        st.plotly_chart(fig2, use_container_width=True)
+    if not era_bu.empty and 'compliance_rate' in era_bu.columns:
+        post_bu_comp = era_bu[era_bu['brand_guidelines_era'] == 'Post-June'].copy()
+        if selected_bus:
+            post_bu_comp = post_bu_comp[post_bu_comp['bu'].isin(selected_bus)]
+        if not post_bu_comp.empty:
+            post_bu_comp = post_bu_comp.sort_values('compliance_rate', ascending=False)
+            colours_comp = ['#22c55e' if r >= 0.8 else ('#f59e0b' if r >= 0.5 else '#ef4444')
+                           for r in post_bu_comp['compliance_rate']]
+            fig_buc = go.Figure(go.Bar(
+                x=post_bu_comp['bu'], y=post_bu_comp['compliance_rate'],
+                marker_color=colours_comp,
+                text=post_bu_comp['compliance_rate'].apply(lambda x: f'{x*100:.0f}%'),
+                textposition='outside',
+                textfont=dict(size=12),
+            ))
+            fig_buc.update_layout(
+                height=300,
+                margin=dict(t=30, b=10, l=10, r=10),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+                yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickformat='.0%', range=[0, 1.15]),
+            )
+            st.plotly_chart(fig_buc, use_container_width=True)
+            st.caption('🟢 ≥80% compliant  🟡 50–79%  🔴 <50%')
 
-    # ── BU compliance rates ───────────────────────────────────────────────────
-    era_bu = brand_impact[brand_impact['table_type'] == 'era_bu'] if 'table_type' in brand_impact.columns else pd.DataFrame()
-    if not era_bu.empty:
-        st.subheader('Brand Compliance Rate by BU (Post-June)')
-        post_bu = era_bu[era_bu['brand_guidelines_era'] == 'Post-June']
-        if not post_bu.empty and 'bu' in post_bu.columns and 'compliance_rate' in post_bu.columns:
-            post_bu = post_bu.copy()
-            if selected_bus:
-                post_bu = post_bu[post_bu['bu'].isin(selected_bus)]
-            fig3 = px.bar(post_bu.sort_values('compliance_rate', ascending=False),
-                         x='bu', y='compliance_rate',
-                         labels={'bu': 'BU', 'compliance_rate': 'Compliance Rate'},
-                         color='compliance_rate',
-                         color_continuous_scale='RdYlGn',
-                         text=post_bu.sort_values('compliance_rate', ascending=False)['compliance_rate'].apply(lambda x: f'{x*100:.0f}%'))
-            fig3.update_layout(height=320, yaxis_tickformat='.0%',
-                              coloraxis_showscale=False,
-                              plot_bgcolor='#fafafa', paper_bgcolor='white')
-            fig3.update_traces(textposition='outside')
-            st.plotly_chart(fig3, use_container_width=True)
+    # ── Next steps ────────────────────────────────────────────────────────────
+    render_insight_box('Recommended next steps', [
+        "📊 **Isolate the scale-up effect** — filter to Apr–May only (similar volume) to compare pre vs post brand book fairly",
+        "👉 **Filter by a single BU** to see its brand book impact without noise from other verticals",
+        "📋 **Action for low-compliance BUs** — brief the copy team on the DO/DON'T framework for that vertical",
+        "🧪 **Go to A/B Testing Hub** to see head-to-head tests where brand-compliant copy won or lost",
+    ], box_type='success')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
