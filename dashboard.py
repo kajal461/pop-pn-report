@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.bq_loader import load_all
+from config import MIN_SENT_THRESHOLD
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -893,7 +894,7 @@ elif page == '🏢 BU Performance':
 
     # ── Best campaign per BU ──────────────────────────────────────────────────
     st.markdown('<div class="section-header" style="margin-top:16px">Best Campaign This Month — by BU</div>', unsafe_allow_html=True)
-    st.caption('Highest CTR campaign in the latest month per BU. Use these as copy benchmarks.')
+    st.caption(f'Highest CTR campaign per BU (min {MIN_SENT_THRESHOLD:,} sent — excludes tiny test campaigns). Use as copy benchmarks.')
 
     title_col = 'Android_Message_Title_Android_Web_Title_iOS'
     body_col  = 'Android_Message_Android_Web_Subtitle_iOS'
@@ -901,7 +902,11 @@ elif page == '🏢 BU Performance':
     if title_col in filtered_master.columns and 'bu' in filtered_master.columns and 'sent_month' in filtered_master.columns:
         latest_m = filtered_master['sent_month'].max()
         latest_m_df = filtered_master[filtered_master['sent_month'] == latest_m].copy()
-        latest_m_df['All_Platform_CTR'] = pd.to_numeric(latest_m_df['All_Platform_CTR'], errors='coerce')
+        latest_m_df['All_Platform_CTR']  = pd.to_numeric(latest_m_df['All_Platform_CTR'], errors='coerce')
+        latest_m_df['All_Platform_Sent'] = pd.to_numeric(latest_m_df['All_Platform_Sent'], errors='coerce')
+
+        # Apply minimum sent threshold — same as Top/Bottom ranking
+        latest_m_df = latest_m_df[latest_m_df['All_Platform_Sent'] >= MIN_SENT_THRESHOLD]
 
         if not latest_m_df.empty:
             top_by_bu = (
