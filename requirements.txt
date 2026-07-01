@@ -1,9 +1,9 @@
+streamlit==1.35.0
 pandas==2.2.2
-gspread==6.1.2
-gspread-dataframe==4.0.0
+plotly==5.22.0
 emoji==2.12.1
 python-dotenv==1.0.1
-pytest==8.2.2
-google-cloud-bigquery[pandas]==3.25.0
-streamlit==1.35.0
-plotly==5.22.0
+google-cloud-bigquery==3.25.0
+google-cloud-bigquery-storage==2.25.0
+pyarrow==16.1.0
+requests==2.32.3
