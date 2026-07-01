@@ -2011,203 +2011,317 @@ elif page == '🏆 Top & Bottom Campaigns':
 # PAGE 6 — A/B TESTING HUB
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '🧪 A/B Testing Hub':
-    st.title('🧪 A/B Testing Hub')
-    st.caption('All A/B test campaigns — winner flagged by CTR lift')
-
+    # Apply both filters
     ab = ab_df.copy()
     if selected_bus and 'bu' in ab.columns:
         ab = ab[ab['bu'].isin(selected_bus)]
+    if selected_months and 'sent_month' in ab.columns:
+        ab = ab[ab['sent_month'].isin(selected_months)]
+
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(m,m) for m in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">🧪 A/B Testing Hub</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
+        Head-to-head copy tests — winner flagged by CTR. Use these to build copy rules grounded in real experiments.
+    </p>
+    """, unsafe_allow_html=True)
 
     if ab.empty:
-        st.info('No A/B test campaigns found for selected BUs.')
+        st.info('No A/B test campaigns found for the selected filters.')
     else:
-        n_campaigns = ab['Campaign_ID'].nunique() if 'Campaign_ID' in ab.columns else len(ab)
-        avg_lift    = pd.to_numeric(ab['ab_lift_ctr'], errors='coerce').mean() if 'ab_lift_ctr' in ab.columns else None
-        n_months    = ab['sent_month'].nunique() if 'sent_month' in ab.columns else '—'
+        # ── Metric cards ──────────────────────────────────────────────────────────
+        camp_col = 'Campaign_ID' if 'Campaign_ID' in ab.columns else 'Campaign ID'
+        n_campaigns = ab[camp_col].nunique() if camp_col in ab.columns else len(ab)
+        ab['ab_lift_ctr'] = pd.to_numeric(ab.get('ab_lift_ctr', 0), errors='coerce').fillna(0)
+        avg_lift = ab[ab['ab_lift_ctr'] > 0]['ab_lift_ctr'].mean()
+        n_months = ab['sent_month'].nunique() if 'sent_month' in ab.columns else 0
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric('A/B Campaigns', n_campaigns)
-        c2.metric('Avg CTR Lift', f'{avg_lift:.2f}%' if pd.notna(avg_lift) else '—')
-        c3.metric('Months Tested', n_months)
+        # Winner rate
+        ab['_is_winner'] = ab['ab_winner'].apply(lambda x: str(x).lower() in ('true','1') or x is True or (hasattr(x,'__float__') and float(x)==1.0))
+        winners = ab[ab['_is_winner']]
 
-        st.markdown('---')
+        cards_html = f"""
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0">
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #4F46E5">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">A/B Campaigns Tested</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{n_campaigns:,}</div>
+                <div style="font-size:11px;color:#94a3b8">unique campaign IDs</div>
+            </div>
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #22c55e">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Avg CTR Lift (winner)</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{f'{avg_lift:.2f}%' if pd.notna(avg_lift) else '—'}</div>
+                <div style="font-size:11px;color:#94a3b8">winner vs loser variation</div>
+            </div>
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #f59e0b">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Total Variations Tested</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{len(ab):,}</div>
+                <div style="font-size:11px;color:#94a3b8">across {n_months} month(s)</div>
+            </div>
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #0891b2">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Winners Analysed</div>
+                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{len(winners):,}</div>
+                <div style="font-size:11px;color:#94a3b8">winning variations</div>
+            </div>
+        </div>
+        """
+        st.markdown(cards_html, unsafe_allow_html=True)
 
-        # ── Pattern summary ───────────────────────────────────────────────────
+        # ── What wins in A/B tests ────────────────────────────────────────────
         pattern_items = []
-        if 'has_specific_number' in ab.columns and 'ab_winner' in ab.columns:
-            winners_ab = ab[ab['ab_winner'] == True]
-            if not winners_ab.empty:
-                num_winners = (winners_ab['has_specific_number'] == True).sum()
-                total_tests = len(winners_ab)
-                if total_tests > 0:
-                    pattern_items.append(f"In **{num_winners} out of {total_tests}** A/B winning variations, the winner had a specific ₹ or POPcoins amount.")
-
-        if 'tonality_parent' in ab.columns and 'ab_winner' in ab.columns:
-            winners_ab = ab[ab['ab_winner'] == True]
-            if not winners_ab.empty:
-                do_winners = (winners_ab['tonality_parent'] == 'DO').sum()
-                total_tests = len(winners_ab)
-                if total_tests > 0:
-                    pattern_items.append(f"**{do_winners}/{total_tests}** winning variations used a brand-compliant DO tone.")
+        if not winners.empty:
+            n = len(winners)
+            def _win_pct(col, val=True):
+                if col not in winners.columns: return None
+                count = winners[col].apply(lambda x: str(x).lower() in ('true','1') or x is True).sum()
+                return int(count), n
+            r = _win_pct('has_specific_number')
+            if r and r[0] >= r[1]//2: pattern_items.append(f"💰 **{r[0]}/{r[1]}** winning variations mentioned a specific ₹ or POPcoins value — specificity wins")
+            r = _win_pct('has_emoji')
+            if r and r[0] >= r[1]//2: pattern_items.append(f"😊 **{r[0]}/{r[1]}** winning variations had an emoji in the title")
+            r = _win_pct('has_action_verb')
+            if r and r[0] >= r[1]//2: pattern_items.append(f"🎯 **{r[0]}/{r[1]}** winning variations used a strong action verb")
+            if 'tonality_parent' in winners.columns:
+                do_count = (winners['tonality_parent'] == 'DO').sum()
+                if do_count >= n//2: pattern_items.append(f"✅ **{do_count}/{n}** winning variations had a brand-compliant DO tone")
+            if 'title_length_bucket' in winners.columns:
+                best_len = winners['title_length_bucket'].value_counts().idxmax()
+                pattern_items.append(f"📏 Most winning variations had **{best_len}** title length")
 
         if pattern_items:
-            render_insight_box('A/B Test Patterns', pattern_items)
-
-        # ── Campaign-level A/B results ────────────────────────────────────────
-        st.subheader('Campaign-level A/B Results')
-        display_cols = ['Campaign_ID', 'Campaign_Name', 'bu', 'sent_month',
-                       'Variation', 'All_Platform_CTR', 'ab_winner', 'ab_lift_ctr',
-                       'tonality', 'emoji_count_bucket', 'title_length_bucket']
-        display_cols = [c for c in display_cols if c in ab.columns]
-
-        ab_display = ab[display_cols].copy()
-        if 'ab_winner' in ab_display.columns:
-            ab_display['ab_winner'] = ab_display['ab_winner'].apply(
-                lambda x: '🏆 Winner' if x is True or str(x).lower() == 'true' else ''
-            )
-
-        sort_col = 'Campaign_ID' if 'Campaign_ID' in ab_display.columns else ab_display.columns[0]
-        st.dataframe(ab_display.sort_values(sort_col), use_container_width=True, hide_index=True)
+            render_insight_box('What wins in A/B tests — patterns from your real experiments', pattern_items, box_type='success')
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
         # ── CTR lift distribution ─────────────────────────────────────────────
-        if 'ab_lift_ctr' in ab.columns:
-            st.subheader('CTR Lift Distribution Across A/B Tests')
-            ab_lift = ab.copy()
-            ab_lift['ab_lift_ctr'] = pd.to_numeric(ab_lift['ab_lift_ctr'], errors='coerce')
-            ab_lift = ab_lift.dropna(subset=['ab_lift_ctr'])
-            if not ab_lift.empty:
-                fig = px.histogram(ab_lift, x='ab_lift_ctr', nbins=20,
-                                 labels={'ab_lift_ctr': 'CTR Lift (%)', 'count': 'Number of Tests'},
-                                 color_discrete_sequence=['#4F46E5'])
-                fig.add_vline(x=0, line_dash='dash', line_color='grey')
-                fig.update_layout(height=320, plot_bgcolor='#fafafa', paper_bgcolor='white')
-                st.plotly_chart(fig, use_container_width=True)
+        st.markdown('<div class="section-header">CTR Lift Distribution</div>', unsafe_allow_html=True)
+        st.caption('How much did the winning variation beat the losing variation? Positive = winner clearly better.')
+        if not ab[ab['ab_lift_ctr'] > 0].empty:
+            lift_data = ab[ab['ab_lift_ctr'] > 0].copy()
+            fig_lift = go.Figure(go.Histogram(
+                x=lift_data['ab_lift_ctr'], nbinsx=20,
+                marker_color='#4F46E5', opacity=0.8,
+                hovertemplate='CTR Lift: %{x:.2f}%<br>Count: %{y}<extra></extra>',
+            ))
+            fig_lift.add_vline(x=float(avg_lift) if pd.notna(avg_lift) else 0,
+                               line_dash='dash', line_color='#22c55e', line_width=2,
+                               annotation_text=f'Avg: {avg_lift:.2f}%' if pd.notna(avg_lift) else '')
+            fig_lift.update_layout(
+                height=280, margin=dict(t=20, b=20, l=10, r=10),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(title='CTR Lift (%)', showgrid=True, gridcolor='#f1f5f9'),
+                yaxis=dict(title='Number of Tests', showgrid=True, gridcolor='#f1f5f9'),
+            )
+            st.plotly_chart(fig_lift, use_container_width=True)
+
+        # ── A/B Results table ─────────────────────────────────────────────────
+        st.markdown('<div class="section-header">All A/B Test Results</div>', unsafe_allow_html=True)
+        title_col_ab = 'Android_Message_Title_Android_Web_Title_iOS'
+        show_cols = [camp_col, 'bu', 'sent_month', 'Variation', title_col_ab,
+                     'All_Platform_CTR', 'ab_lift_ctr', '_is_winner', 'tonality',
+                     'emoji_count_bucket', 'title_length_bucket', 'has_specific_number']
+        show_cols = [c for c in show_cols if c in ab.columns]
+        tbl = ab[show_cols].copy()
+        if '_is_winner' in tbl.columns:
+            tbl['_is_winner'] = tbl['_is_winner'].apply(lambda x: '🏆 Winner' if x else '')
+        if 'All_Platform_CTR' in tbl.columns:
+            tbl['All_Platform_CTR'] = pd.to_numeric(tbl['All_Platform_CTR'], errors='coerce').apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
+        if 'ab_lift_ctr' in tbl.columns:
+            tbl['ab_lift_ctr'] = pd.to_numeric(tbl['ab_lift_ctr'], errors='coerce').apply(lambda x: f'{x:+.2f}%' if pd.notna(x) and x != 0 else '—')
+        tbl = tbl.rename(columns={
+            camp_col: 'Campaign ID', '_is_winner': 'Result',
+            'All_Platform_CTR': 'CTR', 'ab_lift_ctr': 'CTR Lift',
+            title_col_ab: 'Title (truncated)',
+        })
+        if 'Title (truncated)' in tbl.columns:
+            tbl['Title (truncated)'] = tbl['Title (truncated)'].astype(str).str[:50]
+        sort_c = 'Campaign ID' if 'Campaign ID' in tbl.columns else tbl.columns[0]
+        st.dataframe(tbl.sort_values([sort_c, 'CTR'], ascending=[True, False]), use_container_width=True, hide_index=True)
+
+        # ── Next steps ────────────────────────────────────────────────────────
+        render_insight_box('Recommended next steps', [
+            "📋 **Codify the patterns** — if 8/10 winning A/B variations had a specific ₹ amount, make that a mandatory brief requirement",
+            "🔄 **Always run A/B tests** — even small tests (2 variations, same audience) build your copy learning database over time",
+            "✍️ **Next test to run** — pick the brand voice finding from Copy Intelligence and test a DO-tone vs DON'T-tone version of the same campaign",
+        ], box_type='success')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE 7 — TIMING & FREQUENCY
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == '⏰ Timing & Frequency':
-    st.title('⏰ Timing & Frequency Analysis')
-
     m = filtered_master.copy()
-    if 'All_Platform_CTR' in m.columns:
-        m['All_Platform_CTR'] = pd.to_numeric(m['All_Platform_CTR'], errors='coerce')
+    m['All_Platform_CTR'] = pd.to_numeric(m.get('All_Platform_CTR', 0), errors='coerce').fillna(0)
 
-    # ── Auto-insight ──────────────────────────────────────────────────────────
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(x,x) for x in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">⏰ Timing & Frequency</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
+        When do campaigns perform best? Use this to schedule smarter, not more.
+    </p>
+    """, unsafe_allow_html=True)
+
+    # ── Auto-insights ─────────────────────────────────────────────────────────
     timing_insights = []
-    if 'time_slot_bucket' in m.columns and 'All_Platform_CTR' in m.columns:
+    best_slot = best_day = None
+    if 'time_slot_bucket' in m.columns:
         ts_agg = m.groupby('time_slot_bucket')['All_Platform_CTR'].mean().dropna()
         if not ts_agg.empty:
             best_slot = ts_agg.idxmax()
-            best_slot_ctr = ts_agg.max()
-            timing_insights.append(f"⏰ Best time slot: **{best_slot}** with avg CTR of **{best_slot_ctr:.2f}%**.")
-
-    if 'sent_day_of_week' in m.columns and 'All_Platform_CTR' in m.columns:
+            timing_insights.append(f"⏰ **{best_slot}** is the highest-CTR time slot ({ts_agg.max():.2f}%). Schedule priority campaigns here.")
+    if 'sent_day_of_week' in m.columns:
         dow_agg = m.groupby('sent_day_of_week')['All_Platform_CTR'].mean().dropna()
         if not dow_agg.empty:
             best_day = dow_agg.idxmax()
-            best_day_ctr = dow_agg.max()
-            timing_insights.append(f"📅 Best day: **{best_day}** with avg CTR of **{best_day_ctr:.2f}%**.")
-
-    if 'is_weekend' in m.columns and 'All_Platform_CTR' in m.columns:
-        m['is_weekend_bool'] = m['is_weekend'].apply(lambda x: True if x is True or str(x).lower() == 'true' else False)
-        wknd_agg = m.groupby('is_weekend_bool')['All_Platform_CTR'].mean()
-        if len(wknd_agg) == 2:
-            wknd_ctr = wknd_agg.get(True, None)
-            wkday_ctr = wknd_agg.get(False, None)
-            if pd.notna(wknd_ctr) and pd.notna(wkday_ctr):
-                better = 'weekends' if wknd_ctr > wkday_ctr else 'weekdays'
-                diff = abs(wknd_ctr - wkday_ctr)
-                timing_insights.append(f"📊 **{better.title()}** perform better by **{diff:.2f}% CTR**.")
-
+            timing_insights.append(f"📅 **{best_day}** is the best day to send ({dow_agg.max():.2f}% avg CTR).")
+    if 'is_weekend' in m.columns:
+        m['_wknd'] = m['is_weekend'].apply(lambda x: 'Weekend' if (x is True or str(x).lower()=='true') else 'Weekday')
+        wknd = m.groupby('_wknd')['All_Platform_CTR'].mean()
+        if len(wknd)==2:
+            diff = abs(wknd.get('Weekend',0) - wknd.get('Weekday',0))
+            better = 'Weekends' if wknd.get('Weekend',0) > wknd.get('Weekday',0) else 'Weekdays'
+            timing_insights.append(f"📊 **{better}** outperform by {diff:.2f}% CTR — adjust weekend cadence accordingly.")
+    if 'day_of_month_bucket' in m.columns:
+        pay = m.groupby('day_of_month_bucket')['All_Platform_CTR'].mean().dropna()
+        if 'Payday Week' in pay.index and 'Rest of Month' in pay.index:
+            pay_diff = pay['Payday Week'] - pay['Rest of Month']
+            if abs(pay_diff) >= 0.05:
+                better_p = 'Payday Week (days 1–7)' if pay_diff > 0 else 'Rest of Month'
+                timing_insights.append(f"💰 **{better_p}** shows {abs(pay_diff):.2f}% higher CTR — time big campaigns around salary credit.")
     if timing_insights:
-        render_insight_box('Timing Insights', timing_insights)
+        render_insight_box('Key timing findings — act on these', timing_insights)
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-    st.markdown('---')
-
-    # ── Hour × Day heatmap ────────────────────────────────────────────────────
-    st.subheader('CTR Heatmap — Hour × Day of Week')
-    if 'sent_hour' in m.columns and 'sent_day_of_week' in m.columns:
-        heat = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].mean().reset_index()
-        heat_pivot = heat.pivot(index='sent_day_of_week', columns='sent_hour', values='All_Platform_CTR')
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        heat_pivot = heat_pivot.reindex([d for d in day_order if d in heat_pivot.index])
-        fig3 = px.imshow(heat_pivot, color_continuous_scale='RdYlGn',
-                        labels=dict(x='Hour of Day', y='Day of Week', color='Avg CTR (%)'),
-                        aspect='auto')
-        fig3.update_layout(height=360, plot_bgcolor='white', paper_bgcolor='white')
-        st.plotly_chart(fig3, use_container_width=True)
-    else:
-        st.info('Hour/day data not available for heatmap.')
-
-    st.markdown('---')
-
-    # ── Charts row ────────────────────────────────────────────────────────────
+    # ── Top section: time slot + day of week ──────────────────────────────────
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader('CTR by Time Slot')
+        st.markdown('<div class="section-header">CTR by Time Slot</div>', unsafe_allow_html=True)
+        st.caption('Dawn 4–7am · Morning 7–10am · Mid-day 10am–2pm · Evening 2–7pm · Night 7pm+')
         if 'time_slot_bucket' in m.columns:
             ts = m.groupby('time_slot_bucket')['All_Platform_CTR'].mean().reset_index()
-            order = ['Dawn', 'Morning', 'Mid-day', 'Evening', 'Night', 'Other']
-            ts['time_slot_bucket'] = pd.Categorical(ts['time_slot_bucket'], categories=order, ordered=True)
-            ts = ts.sort_values('time_slot_bucket')
-            fig = px.bar(ts, x='time_slot_bucket', y='All_Platform_CTR',
-                        labels={'time_slot_bucket': 'Time Slot', 'All_Platform_CTR': 'Avg CTR (%)'},
-                        color='All_Platform_CTR', color_continuous_scale='Blues')
-            fig.update_layout(height=300, showlegend=False, coloraxis_showscale=False,
-                             plot_bgcolor='#fafafa', paper_bgcolor='white')
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info('Time slot data not available.')
+            slot_order = ['Dawn', 'Morning', 'Mid-day', 'Evening', 'Night', 'Other']
+            ts['time_slot_bucket'] = pd.Categorical(ts['time_slot_bucket'], categories=[s for s in slot_order if s in ts['time_slot_bucket'].values], ordered=True)
+            ts = ts.sort_values('time_slot_bucket').dropna()
+            ctrs = ts['All_Platform_CTR'].tolist()
+            mx = max(ctrs) if ctrs else 1
+            mn = min(ctrs) if ctrs else 0
+            bar_cols = ['#22c55e' if c==mx else ('#ef4444' if c==mn else '#4F46E5') for c in ctrs]
+            fig_ts = go.Figure(go.Bar(
+                x=ts['time_slot_bucket'], y=ts['All_Platform_CTR'],
+                marker_color=bar_cols,
+                text=ts['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside', textfont=dict(size=12),
+            ))
+            fig_ts.update_layout(height=300, margin=dict(t=30,b=10,l=5,r=5),
+                                plot_bgcolor='white', paper_bgcolor='white',
+                                xaxis=dict(type='category', showgrid=False),
+                                yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
+            st.plotly_chart(fig_ts, use_container_width=True)
 
     with col2:
-        st.subheader('CTR by Day of Week')
+        st.markdown('<div class="section-header">CTR by Day of Week</div>', unsafe_allow_html=True)
+        st.caption('Which day drives the highest engagement?')
         if 'sent_day_of_week' in m.columns:
             dow = m.groupby('sent_day_of_week')['All_Platform_CTR'].mean().reset_index()
-            day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-            dow['sent_day_of_week'] = pd.Categorical(dow['sent_day_of_week'], categories=day_order, ordered=True)
-            dow = dow.sort_values('sent_day_of_week')
-            fig2 = px.bar(dow, x='sent_day_of_week', y='All_Platform_CTR',
-                         labels={'sent_day_of_week': 'Day', 'All_Platform_CTR': 'Avg CTR (%)'},
-                         color='All_Platform_CTR', color_continuous_scale='Purples')
-            fig2.update_layout(height=300, showlegend=False, coloraxis_showscale=False,
-                              plot_bgcolor='#fafafa', paper_bgcolor='white')
-            st.plotly_chart(fig2, use_container_width=True)
-        else:
-            st.info('Day of week data not available.')
+            day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+            dow['sent_day_of_week'] = pd.Categorical(dow['sent_day_of_week'], categories=[d for d in day_order if d in dow['sent_day_of_week'].values], ordered=True)
+            dow = dow.sort_values('sent_day_of_week').dropna()
+            ctrs_d = dow['All_Platform_CTR'].tolist()
+            mx_d = max(ctrs_d) if ctrs_d else 1
+            mn_d = min(ctrs_d) if ctrs_d else 0
+            bar_cols_d = ['#22c55e' if c==mx_d else ('#ef4444' if c==mn_d else '#4F46E5') for c in ctrs_d]
+            fig_dow = go.Figure(go.Bar(
+                x=dow['sent_day_of_week'], y=dow['All_Platform_CTR'],
+                marker_color=bar_cols_d,
+                text=dow['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside', textfont=dict(size=12),
+            ))
+            fig_dow.update_layout(height=300, margin=dict(t=30,b=10,l=5,r=5),
+                                 plot_bgcolor='white', paper_bgcolor='white',
+                                 xaxis=dict(type='category', showgrid=False),
+                                 yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
+            st.plotly_chart(fig_dow, use_container_width=True)
 
+    # ── Heatmap ───────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">CTR Heatmap — Hour × Day of Week</div>', unsafe_allow_html=True)
+    st.caption('Green = high CTR, Red = low CTR. Best send windows are the darkest green cells.')
+    if 'sent_hour' in m.columns and 'sent_day_of_week' in m.columns:
+        heat = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].mean().reset_index()
+        heat['sent_hour'] = pd.to_numeric(heat['sent_hour'], errors='coerce')
+        heat_pivot = heat.pivot(index='sent_day_of_week', columns='sent_hour', values='All_Platform_CTR')
+        day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+        heat_pivot = heat_pivot.reindex([d for d in day_order if d in heat_pivot.index])
+        fig_heat = px.imshow(heat_pivot, color_continuous_scale='RdYlGn',
+                            labels=dict(x='Hour of Day', y='', color='Avg CTR (%)'), aspect='auto')
+        fig_heat.update_layout(height=350, margin=dict(t=10,b=20,l=10,r=10),
+                               plot_bgcolor='white', paper_bgcolor='white')
+        st.plotly_chart(fig_heat, use_container_width=True)
+    else:
+        st.info('Hour and day data not available. Run the pipeline to populate timing columns.')
+
+    # ── Bottom section: payday + campaign volume ──────────────────────────────
     col3, col4 = st.columns(2)
 
     with col3:
-        st.subheader('Weekend vs Weekday CTR')
-        if 'is_weekend' in m.columns:
-            wknd = m.groupby('is_weekend_bool' if 'is_weekend_bool' in m.columns else 'is_weekend')['All_Platform_CTR'].mean().reset_index()
-            bool_col = 'is_weekend_bool' if 'is_weekend_bool' in wknd.columns else 'is_weekend'
-            wknd['label'] = wknd[bool_col].map({True: 'Weekend', False: 'Weekday',
-                                                 'True': 'Weekend', 'False': 'Weekday',
-                                                 1: 'Weekend', 0: 'Weekday'})
-            fig4 = px.bar(wknd, x='label', y='All_Platform_CTR',
-                         color='label',
-                         color_discrete_map={'Weekend': '#f59e0b', 'Weekday': '#4F46E5'},
-                         labels={'label': '', 'All_Platform_CTR': 'Avg CTR (%)'})
-            fig4.update_layout(height=280, showlegend=False,
-                              plot_bgcolor='#fafafa', paper_bgcolor='white')
-            st.plotly_chart(fig4, use_container_width=True)
-        else:
-            st.info('Weekend data not available.')
-
-    with col4:
-        st.subheader('Payday Week vs Rest of Month')
+        st.markdown('<div class="section-header">Payday Week vs Rest of Month</div>', unsafe_allow_html=True)
+        st.caption('Days 1–7 of the month (salary credit period) vs rest')
         if 'day_of_month_bucket' in m.columns:
             pay = m.groupby('day_of_month_bucket')['All_Platform_CTR'].mean().reset_index()
-            fig5 = px.bar(pay, x='day_of_month_bucket', y='All_Platform_CTR',
-                         color='day_of_month_bucket',
-                         color_discrete_map={'Payday Week': '#22c55e', 'Rest of Month': '#94a3b8'},
-                         labels={'day_of_month_bucket': '', 'All_Platform_CTR': 'Avg CTR (%)'})
-            fig5.update_layout(height=280, showlegend=False,
-                              plot_bgcolor='#fafafa', paper_bgcolor='white')
-            st.plotly_chart(fig5, use_container_width=True)
-        else:
-            st.info('Day of month data not available.')
+            pay_ctrs = pay['All_Platform_CTR'].tolist()
+            pay_mx = max(pay_ctrs) if pay_ctrs else 1
+            pay_cols = ['#22c55e' if c==pay_mx else '#ef4444' for c in pay_ctrs]
+            fig_pay = go.Figure(go.Bar(
+                x=pay['day_of_month_bucket'], y=pay['All_Platform_CTR'],
+                marker_color=pay_cols,
+                text=pay['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside', textfont=dict(size=13),
+            ))
+            fig_pay.update_layout(height=260, margin=dict(t=30,b=10,l=5,r=5),
+                                 plot_bgcolor='white', paper_bgcolor='white',
+                                 xaxis=dict(type='category', showgrid=False),
+                                 yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
+            st.plotly_chart(fig_pay, use_container_width=True)
+
+    with col4:
+        st.markdown('<div class="section-header">Weekend vs Weekday</div>', unsafe_allow_html=True)
+        st.caption('Do your Gen Z users engage more on weekends?')
+        if 'is_weekend' in m.columns:
+            m['_wknd_label'] = m['is_weekend'].apply(lambda x: 'Weekend' if (x is True or str(x).lower()=='true') else 'Weekday')
+            wknd = m.groupby('_wknd_label')['All_Platform_CTR'].mean().reset_index()
+            wknd_ctrs = wknd['All_Platform_CTR'].tolist()
+            wknd_mx = max(wknd_ctrs) if wknd_ctrs else 1
+            wknd_cols = ['#22c55e' if c==wknd_mx else '#ef4444' for c in wknd_ctrs]
+            fig_wknd = go.Figure(go.Bar(
+                x=wknd['_wknd_label'], y=wknd['All_Platform_CTR'],
+                marker_color=wknd_cols,
+                text=wknd['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside', textfont=dict(size=13),
+            ))
+            fig_wknd.update_layout(height=260, margin=dict(t=30,b=10,l=5,r=5),
+                                  plot_bgcolor='white', paper_bgcolor='white',
+                                  xaxis=dict(type='category', showgrid=False),
+                                  yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
+            st.plotly_chart(fig_wknd, use_container_width=True)
+
+    # ── Next steps ────────────────────────────────────────────────────────────
+    best_slot_str = best_slot if best_slot else 'Morning'
+    best_day_str  = best_day  if best_day  else 'Tuesday'
+    render_insight_box('Recommended next steps', [
+        f"📅 **Schedule next week's campaigns** for {best_day_str} at {best_slot_str} — highest CTR window from your data",
+        "📊 **Audit cadence** — use the heatmap to find hours with low CTR and avoid them for important campaigns",
+        "💰 **Payday calendar** — if payday week outperforms, align your highest-value campaigns with salary credit dates (1st–7th)",
+        "🧪 **Test day-of-week** — run the same campaign on a Tuesday vs Saturday and measure if your specific BU behaves differently",
+    ], box_type='success')
