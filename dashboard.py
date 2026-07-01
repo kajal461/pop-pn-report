@@ -476,7 +476,11 @@ bu_filtered = bool(selected_bus and set(selected_bus) != set(all_bus))
 st.sidebar.markdown('---')
 
 # ── Universal Period Filter ───────────────────────────────────────────────────
-all_months = sorted(master['sent_month'].dropna().unique().tolist()) if 'sent_month' in master.columns else []
+# Exclude NaT, None, 'nan' from the month filter — these are data artefacts from merged datasets
+all_months = sorted([
+    m for m in (master['sent_month'].dropna().unique().tolist() if 'sent_month' in master.columns else [])
+    if m and str(m) not in ('NaT', 'nan', 'None', '')
+]) if 'sent_month' in master.columns else []
 # Format months for display: '2026-03' → 'Mar 2026'
 def fmt_month(m):
     try:
