@@ -1283,6 +1283,10 @@ elif page == '✍️ Copy Intelligence':
                 continue
 
             # Apply known category ordering
+            # Normalise dimension_value: strip BigQuery float artefacts before ordering
+            dim_df['dimension_value'] = dim_df['dimension_value'].apply(
+                lambda v: str(int(float(v))) if str(v).endswith('.0') else str(v)
+            )
             if dim in CATEGORY_ORDERS:
                 order = [v for v in CATEGORY_ORDERS[dim] if v in dim_df['dimension_value'].values]
                 if order:
@@ -1291,8 +1295,14 @@ elif page == '✍️ Copy Intelligence':
             else:
                 dim_df = dim_df.sort_values('avg_ctr', ascending=False)
 
-            # Friendly labels for True/False
-            dim_df['label'] = dim_df['dimension_value'].astype(str).map(lambda v: BOOL_LABELS.get(v, v))
+            # Friendly labels — also strip BigQuery float artefacts ("0.0"→"0", "1.0"→"1")
+            def _clean_dim_val(v):
+                s = str(v)
+                if s.endswith('.0'):
+                    try: s = str(int(float(s)))
+                    except: pass
+                return BOOL_LABELS.get(s, s)
+            dim_df['label'] = dim_df['dimension_value'].apply(_clean_dim_val)
 
             # Color by PERFORMANCE (best=green, worst=red) — NOT by semantic meaning.
             # Reason: when "No" outperforms "Yes" (e.g. personalisation), green should show "No".
