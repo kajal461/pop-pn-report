@@ -1773,24 +1773,29 @@ elif page == '🏆 Top & Bottom Campaigns':
     title_col = 'Android_Message_Title_Android_Web_Title_iOS'
     body_col  = 'Android_Message_Android_Web_Subtitle_iOS'
 
-    # Build Top/Bottom from filtered_master so BU+period filters work correctly
-    from src.top_bottom import build_top_bottom as _build_tb
+    # Compute top/bottom directly from filtered_master using BigQuery column names
+    # (avoids column-name mismatch when routing through build_top_bottom)
     from config import MIN_SENT_THRESHOLD
 
     fm = filtered_master.copy()
-    for col in ['All_Platform_Sent', 'All_Platform_CTR', 'All_Platform_Clicks',
-                'All_Platform_Impressions', 'primary_conversions']:
-        if col in fm.columns:
-            fm[col] = pd.to_numeric(fm[col], errors='coerce').fillna(0)
-    # Normalize column names for build_top_bottom
-    camp_col_name = 'Campaign_ID' if 'Campaign_ID' in fm.columns else 'Campaign ID'
-    name_col = 'Campaign_Name' if 'Campaign_Name' in fm.columns else 'Campaign Name'
-    fm_tb = _build_tb(fm) if not fm.empty else pd.DataFrame()
+    fm['All_Platform_CTR']  = pd.to_numeric(fm.get('All_Platform_CTR',  0), errors='coerce').fillna(0)
+    fm['All_Platform_Sent'] = pd.to_numeric(fm.get('All_Platform_Sent', 0), errors='coerce').fillna(0)
 
-    # Month selector
+    eligible = fm[
+        (fm['All_Platform_Sent'] >= MIN_SENT_THRESHOLD) &
+        (fm['All_Platform_CTR'] <= 100) &
+        (fm['All_Platform_CTR'] > 0)
+    ].copy()
+
+    tb_frames = []
+    for month, group in (eligible.groupby('sent_month') if 'sent_month' in eligible.columns else []):
+        ranked = group.sort_values('All_Platform_CTR', ascending=False).reset_index(drop=True)
+        top = ranked.head(5).copy(); top['rank'] = range(1, len(top)+1); top['rank_type'] = 'Top'
+        bottom = ranked.tail(5).copy(); bottom['rank'] = range(1, len(bottom)+1); bottom['rank_type'] = 'Bottom'
+        tb_frames.extend([top, bottom])
+
+    fm_tb = pd.concat(tb_frames, ignore_index=True) if tb_frames else pd.DataFrame()
     months_avail = sorted(fm_tb['sent_month'].dropna().unique().tolist()) if not fm_tb.empty and 'sent_month' in fm_tb.columns else []
-    if not months_avail and 'sent_month' in fm.columns:
-        months_avail = sorted(fm['sent_month'].dropna().unique().tolist())
 
     filter_label = []
     if bu_filtered: filter_label.append(', '.join(selected_bus))
@@ -1935,42 +1940,40 @@ elif page == '🏆 Top & Bottom Campaigns':
         ctr    = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce') or 0
         sent   = row.get('All_Platform_Sent', 0)
         clicks = row.get('All_Platform_Clicks', 0)
-        rank   = row.get('rank', '—')
+        rank   = row.get('rank', '?')
         bu     = str(row.get('bu', '—'))
         title  = str(row.get(title_col, '—'))
         body   = str(row.get(body_col, '—'))
         tone   = str(row.get('tonality', '—'))
         brand  = row.get('brand_compliant', False)
         diag   = auto_diagnosis(row, title_col, body_col)
-        conv   = row.get('primary_conversions', 0)
+        conv   = float(row.get('primary_conversions', 0) or 0)
+        conv_html = ('<span>🎯 ' + _sfmt(conv) + ' converted</span>') if conv > 0 else ''
+        rank_str  = str(int(rank)) if pd.notna(rank) and str(rank) not in ('—', '?', 'nan') else '?'
+        badge     = _brand_badge(brand)
 
-        return f"""
-        <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;
-                    padding:16px 20px;margin-bottom:12px;border-left:4px solid {border}">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-                <div>
-                    <span style="font-size:12px;color:#64748b;font-weight:700">
-                        {icon} #{int(rank) if pd.notna(rank) and str(rank) != '—' else '?'} · {bu}
-                    </span>
-                </div>
-                <div style="text-align:right">
-                    <span style="font-size:22px;font-weight:800;color:#0f172a">{ctr:.2f}%</span>
-                    <span style="font-size:11px;color:#94a3b8"> CTR</span>
-                </div>
-            </div>
-            <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px">"{title}"</div>
-            <div style="font-size:12px;color:#475569;margin-bottom:10px">{body}</div>
-            <div style="display:flex;gap:16px;font-size:11px;color:#64748b;margin-bottom:8px">
-                <span>📤 {_sfmt(sent)} sent</span>
-                <span>👆 {_sfmt(clicks)} clicks</span>
-                {'<span>🎯 ' + _sfmt(conv) + ' converted</span>' if float(conv or 0) > 0 else ''}
-            </div>
-            <div style="font-size:11px;color:#64748b;margin-bottom:8px">Tone: <em>{tone}</em> &nbsp; {_brand_badge(brand)}</div>
-            <div style="background:#f8fafc;border-radius:6px;padding:8px 12px;font-size:12px;color:#1e40af">
-                💡 {diag}
-            </div>
-        </div>
-        """
+        # Build HTML using string concatenation to avoid f-string nesting issues
+        html = (
+            '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;'
+            'padding:16px 20px;margin-bottom:12px;border-left:4px solid ' + border + '">'
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+            '<span style="font-size:12px;color:#64748b;font-weight:700">' + icon + ' #' + rank_str + ' · ' + bu + '</span>'
+            '<span style="font-size:22px;font-weight:800;color:#0f172a">' + f'{ctr:.2f}%' + ' <span style="font-size:11px;color:#94a3b8">CTR</span></span>'
+            '</div>'
+            '<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px">&ldquo;' + title + '&rdquo;</div>'
+            '<div style="font-size:12px;color:#475569;margin-bottom:10px">' + body + '</div>'
+            '<div style="display:flex;gap:16px;font-size:11px;color:#64748b;margin-bottom:8px">'
+            '<span>📤 ' + _sfmt(sent) + ' sent</span>'
+            '<span>👆 ' + _sfmt(clicks) + ' clicks</span>'
+            + conv_html +
+            '</div>'
+            '<div style="font-size:11px;color:#64748b;margin-bottom:8px">Tone: <em>' + tone + '</em> &nbsp; ' + badge + '</div>'
+            '<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;font-size:12px;color:#1e40af">'
+            '💡 ' + diag +
+            '</div>'
+            '</div>'
+        )
+        return html
 
     if not tb_month.empty and 'rank_type' in tb_month.columns:
         top5 = tb_month[tb_month['rank_type'] == 'Top'].sort_values('rank').head(5)
