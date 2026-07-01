@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.bq_loader import load_all
+from src.bq_loader import load_all, clear_all_caches
 from config import MIN_SENT_THRESHOLD
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -377,7 +377,8 @@ period_filtered = bool(selected_months and set(selected_months) != set(all_month
 
 st.sidebar.markdown('---')
 if st.sidebar.button('🔄 Refresh Data'):
-    st.cache_data.clear()
+    clear_all_caches()   # clears bq_loader.load_table cache explicitly
+    st.cache_data.clear()  # clears any other st.cache_data caches
     st.rerun()
 
 st.sidebar.caption('Data refreshes automatically after each weekly run of run_report.py')

@@ -28,6 +28,11 @@ def load_table(table: str) -> pd.DataFrame:
     return client.query(f'SELECT * FROM `{PROJECT_ID}.{DATASET}.{table}`').to_dataframe()
 
 
+def clear_all_caches() -> None:
+    """Clear all bq_loader caches. Called by the Refresh Data button."""
+    load_table.clear()  # clears the cache for this specific function
+
+
 def load_all() -> dict:
     """Load all 7 report tables. Returns dict keyed by table name."""
     return {
