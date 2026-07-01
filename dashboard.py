@@ -1436,13 +1436,32 @@ elif page == '📖 Brand Guidelines Impact':
                 legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
             )
             st.plotly_chart(fig_bu, use_container_width=True)
-            st.caption('Sorted by CTR change (best improvement → most declined). Delta shown above each BU pair.')
+            st.caption('ℹ️ BUs with "—" had no campaigns in that period: POPchop only started in June (no Pre-June data), UPI - Retention had no campaigns in June.')
+            st.caption('Sorted by CTR change (best → most declined). Declines are largely explained by scale-up: BUs that sent 3–10x more campaigns in June had more campaigns pulling the average down, not necessarily worse copy.')
         else:
             st.info('Pre-June or Post-June data not available for comparison.')
     else:
         st.info('BU-level data not available.')
 
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+    # ── Scale-up context ─────────────────────────────────────────────────────
+    # Show campaign volume change per BU
+    if not era_bu.empty:
+        camp_pivot = era_bu.pivot(index='bu', columns='brand_guidelines_era', values='campaign_count').reset_index()
+        camp_pivot.columns.name = None
+        if 'Pre-June' in camp_pivot.columns and 'Post-June' in camp_pivot.columns:
+            camp_pivot['Pre-June'] = pd.to_numeric(camp_pivot['Pre-June'], errors='coerce').fillna(0)
+            camp_pivot['Post-June'] = pd.to_numeric(camp_pivot['Post-June'], errors='coerce').fillna(0)
+            camp_pivot['volume_change'] = ((camp_pivot['Post-June'] - camp_pivot['Pre-June']) / camp_pivot['Pre-June'].replace(0, float('nan')) * 100).round(0)
+
+            big_scale_ups = camp_pivot[camp_pivot['volume_change'] > 50].sort_values('volume_change', ascending=False)
+            if not big_scale_ups.empty:
+                scale_items = [f"**{row['bu']}**: {int(row.get('Pre-June',0)):,} → {int(row.get('Post-June',0)):,} campaigns ({row['volume_change']:+.0f}%)"
+                              for _, row in big_scale_ups.iterrows() if pd.notna(row['volume_change'])]
+                if scale_items:
+                    render_insight_box('Scale-up context: BUs that grew volume in June (explains CTR dilution)',
+                                      scale_items, box_type='warning')
 
     # ── DO vs DON'T CTR ──────────────────────────────────────────────────────
     st.markdown('<div class="section-header">DO vs DON\'T Tone — Does the Brand Book Help?</div>', unsafe_allow_html=True)
@@ -1490,8 +1509,8 @@ elif page == '📖 Brand Guidelines Impact':
             with col_c1:
                 fig_comp = go.Figure()
                 bars = [
-                    ('✅ Brand Compliant\n(DO tone)', do_ctr,   do_camps,   '#22c55e'),
-                    ("❌ Non-Compliant\n(DON'T tone)", dont_ctr, dont_camps, '#ef4444'),
+                    ('✅ Brand Compliant (DO)', do_ctr,   do_camps,   '#22c55e'),
+                    ("❌ Non-Compliant (DON'T)", dont_ctr, dont_camps, '#ef4444'),
                 ]
                 fig_comp.add_trace(go.Bar(
                     x=[b[0] for b in bars],
@@ -1527,7 +1546,7 @@ elif page == '📖 Brand Guidelines Impact':
                         <div style="color:#dc2626;font-weight:700">❌ Non-Compliant</div>
                         <div style="font-size:22px;font-weight:800">{dont_camps:,}</div>
                         <div style="font-size:11px;color:#94a3b8">campaigns</div>
-                        <div style="font-size:11px;color:#f59e0b;margin-top:4px">⚠️ Small sample</div>
+                        <div style="font-size:11px;color:#94a3b8;margin-top:4px">Interpret with caution</div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1549,8 +1568,15 @@ elif page == '📖 Brand Guidelines Impact':
             post_bu_comp = post_bu_comp[post_bu_comp['bu'].isin(selected_bus)]
         if not post_bu_comp.empty:
             post_bu_comp = post_bu_comp.sort_values('compliance_rate', ascending=False)
-            colours_comp = ['#22c55e' if r >= 0.8 else ('#f59e0b' if r >= 0.5 else '#ef4444')
-                           for r in post_bu_comp['compliance_rate']]
+            # Use a tighter color range so small differences are visible
+            compliance_vals = post_bu_comp['compliance_rate'].values
+            min_v = max(0.93, min(compliance_vals) - 0.02)
+            colours_comp = []
+            for r in post_bu_comp['compliance_rate']:
+                if r >= 0.999: colours_comp.append('#22c55e')    # 100% → green
+                elif r >= 0.98: colours_comp.append('#4ade80')   # 98-99% → light green
+                elif r >= 0.95: colours_comp.append('#f59e0b')   # 95-97% → amber
+                else: colours_comp.append('#ef4444')              # <95% → red
             fig_buc = go.Figure(go.Bar(
                 x=post_bu_comp['bu'], y=post_bu_comp['compliance_rate'],
                 marker_color=colours_comp,
@@ -1563,7 +1589,7 @@ elif page == '📖 Brand Guidelines Impact':
                 margin=dict(t=30, b=10, l=10, r=10),
                 plot_bgcolor='white', paper_bgcolor='white',
                 xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
-                yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickformat='.0%', range=[0, 1.15]),
+                yaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickformat='.0%', range=[0.93, 1.05]),
             )
             st.plotly_chart(fig_buc, use_container_width=True)
             st.caption('🟢 ≥80% compliant  🟡 50–79%  🔴 <50%')
