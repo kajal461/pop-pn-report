@@ -128,8 +128,33 @@ def main() -> None:
     summary_bu      = build_summary_bu(full_master)
     top_bottom      = build_top_bottom(full_master)
     copy_analysis   = build_copy_analysis(full_master)
-    ab_results      = build_ab_results(full_master)
+    ab_results_new  = build_ab_results(full_master)
     brand_impact    = build_brand_impact(full_master)
+
+    # A/B test results need historical accumulation — new exports often have no A/B campaigns.
+    # Load existing ab_test_results from BigQuery and merge with any new ones found.
+    from src.bigquery_writer import _get_client, _ensure_dataset
+    try:
+        _client_ab = _get_client(project_id, key_path)
+        _ensure_dataset(_client_ab, project_id)
+        existing_ab = _client_ab.query(
+            f'SELECT * FROM `{project_id}.{os.getenv("BQ_DATASET","pn_report")}.ab_test_results`'
+        ).to_dataframe()
+        if not existing_ab.empty and len(ab_results_new) < len(existing_ab):
+            # New run found fewer A/B tests — merge to preserve history
+            import pandas as _pd
+            ab_combined = _pd.concat([ab_results_new, existing_ab], ignore_index=True)
+            camp_col_ab = 'Campaign_ID' if 'Campaign_ID' in ab_combined.columns else 'Campaign ID'
+            var_col_ab  = next((c for c in ['Variation','Campaign_Version_Name','Campaign Version Name']
+                                if c in ab_combined.columns), None)
+            dedup_ab = [c for c in [camp_col_ab, var_col_ab] if c]
+            ab_results = ab_combined.drop_duplicates(subset=dedup_ab, keep='first') if dedup_ab else ab_combined
+            print(f'  A/B history preserved: {len(existing_ab)} existing + {len(ab_results_new)} new → {len(ab_results)} total')
+        else:
+            ab_results = ab_results_new
+    except Exception:
+        ab_results = ab_results_new  # first run or BQ error — use what we have
+
     print(f'   -> overall:{len(summary_overall)}r  by_bu:{len(summary_bu)}r  '
           f'top_bottom:{len(top_bottom)}r  copy:{len(copy_analysis)}r  '
           f'ab:{len(ab_results)}r  brand:{len(brand_impact)}r')
@@ -151,7 +176,7 @@ def main() -> None:
     print('Done. master_enriched now contains full historical data.')
     print(f'    Total campaigns in BigQuery: {len(full_master):,}')
     if 'sent_month' in full_master.columns:
-        months_sorted = sorted(full_master['sent_month'].dropna().unique().tolist())
+        months_sorted = sorted([m for m in full_master['sent_month'].dropna().unique().tolist() if str(m) != 'NaT'])
         date_from = months_sorted[0] if months_sorted else '?'
         date_to   = months_sorted[-1] if months_sorted else '?'
         # Note: first and last months are likely partial (e.g. last few days of March)
