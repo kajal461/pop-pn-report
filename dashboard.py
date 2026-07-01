@@ -2352,26 +2352,68 @@ elif page == '⏰ Timing & Frequency':
                 else:
                     hover_text.loc[day, hour] = f'{ctr_v:.2f}% CTR<br>{int(count_v or 0)} campaigns'
 
+        # Build annotation text: show CTR in cells above 2% (signal cells only)
+        all_hours = sorted(heat_pivot.columns.tolist())
+        all_days  = heat_pivot.index.tolist()
+
         fig_heat = px.imshow(
             heat_pivot,
             color_continuous_scale='RdYlGn',
             zmin=0, zmax=color_max,
             labels=dict(x='Hour of Day', y='', color='Avg CTR (%)'),
             aspect='auto',
+            x=all_hours,
+            y=all_days,
         )
-        fig_heat.update_traces(customdata=hover_text.values, hovertemplate='%{y} %{x}:00<br>%{customdata}<extra></extra>')
+        # Cell borders for readability
+        fig_heat.update_traces(xgap=1, ygap=1,
+                               customdata=hover_text.values,
+                               hovertemplate='<b>%{y}</b> · %{x}:00<br>%{customdata}<extra></extra>')
+
+        # Inline CTR text for high-signal cells (CTR ≥ 2%)
+        annotations = []
+        for day_i, day in enumerate(all_days):
+            for hour in all_hours:
+                if hour not in heat_pivot.columns: continue
+                val = heat_pivot.loc[day, hour] if day in heat_pivot.index else None
+                if pd.notna(val) and val >= 2.0:
+                    cnt = count_pivot.loc[day, hour] if (day in count_pivot.index and hour in count_pivot.columns) else 0
+                    text_col = 'white' if val >= color_max * 0.75 else '#1f2937'
+                    annotations.append(dict(
+                        x=hour, y=day,
+                        text=f'{val:.1f}%',
+                        showarrow=False,
+                        font=dict(size=8, color=text_col, family='monospace'),
+                        xref='x', yref='y',
+                    ))
+
         fig_heat.update_layout(
-            height=360, margin=dict(t=10,b=30,l=10,r=10),
+            height=400,
+            margin=dict(t=20, b=40, l=10, r=10),
             plot_bgcolor='white', paper_bgcolor='white',
-            coloraxis_colorbar=dict(title='Avg CTR (%)', tickformat='.1f'),
+            coloraxis_colorbar=dict(
+                title='Avg CTR (%)', tickformat='.1f',
+                len=0.8, thickness=14,
+            ),
+            annotations=annotations,
+            xaxis=dict(
+                title='Hour of Day',
+                tickmode='array',
+                tickvals=list(range(24)),
+                ticktext=[f'{h:02d}:00' for h in range(24)],
+                tickfont=dict(size=8),
+                tickangle=45,
+                showgrid=False,
+            ),
+            yaxis=dict(showgrid=False, tickfont=dict(size=12)),
         )
         st.plotly_chart(fig_heat, use_container_width=True)
         st.caption(
-            f'ℹ️ Color scale capped at {color_max:.1f}% (90th percentile of your data) '
-            f'so subtle differences between 1–5% CTR cells are visible. '
-            f'Hover over any cell to see exact CTR and campaign count. '
-            f'White cells = no campaigns sent at that hour. '
-            f'Green outlier cells with very few campaigns may not be reliable patterns.'
+            f'Color scale: 0–{color_max:.1f}% (90th percentile of your data) · '
+            f'CTR values shown in cells ≥ 2% · '
+            f'Hover any cell for exact CTR + campaign count · '
+            f'White = no campaigns sent · '
+            f'Isolated green cells with few campaigns (hover to check) may be outliers, not reliable patterns'
         )
     else:
         st.info('Hour and day data not available. Run the pipeline to populate timing columns.')
