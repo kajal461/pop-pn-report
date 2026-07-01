@@ -17,9 +17,25 @@ OUTPUT_COLS = [
 ]
 
 
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize BigQuery underscore column names back to space-separated format."""
+    known = set(OUTPUT_COLS + [
+        'bu', 'sent_month', 'tonality', 'brand_compliant', 'primary_conversions',
+        'conversion_event', 'conversion_tracked', 'rank', 'rank_type',
+        'has_specific_number', 'has_emoji', 'has_action_verb', 'has_fomo_signal',
+        'has_cultural_reference', 'has_personalisation',
+    ])
+    rename = {}
+    for col in df.columns:
+        space_ver = col.replace('_', ' ')
+        if col not in known and space_ver in known and col != space_ver:
+            rename[col] = space_ver
+    return df.rename(columns=rename) if rename else df
+
+
 def build_top_bottom(master: pd.DataFrame) -> pd.DataFrame:
     """Build Top 5 and Bottom 5 campaigns per month, ranked by CTR. Min 500 sent."""
-    df = master.copy()
+    df = _normalize_cols(master.copy())  # handles both BigQuery (underscores) and raw (spaces)
     df[COL_ALL_SENT] = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
     df[COL_ALL_CTR]  = pd.to_numeric(df[COL_ALL_CTR], errors='coerce').fillna(0)
 
