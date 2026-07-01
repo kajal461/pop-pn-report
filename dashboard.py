@@ -1244,7 +1244,6 @@ elif page == '✍️ Copy Intelligence':
         ('has_fomo_signal',      'Urgency / FOMO Language',    '"Last chance", "Expires", "Only today" etc.'),
         ('has_personalisation',  'Personalisation',            'Copy uses "you" or "your" — targets the user directly'),
         ('has_rich_media',       'Rich Media (Image)',         'Notification includes an image vs plain text only'),
-        ('brand_guidelines_era', 'Pre vs Post Brand Book (June)', 'Did CTR improve after the brand book launched in June?'),
         ('is_weekend',           'Weekend vs Weekday',         'Do campaigns sent on weekends perform differently?'),
         ('day_of_month_bucket',  'Payday Week vs Rest',        'Days 1–7 of month (salary period) vs rest of month'),
         ('time_slot_bucket',     'Best Time Slot',             'Dawn 4–7am, Morning 7–10am, Mid-day 10–2pm, Evening 2–7pm, Night 7pm+'),
@@ -1298,19 +1297,18 @@ elif page == '✍️ Copy Intelligence':
             # Friendly labels for True/False
             dim_df['label'] = dim_df['dimension_value'].astype(str).map(lambda v: BOOL_LABELS.get(v, v))
 
-            # Color: brand_guidelines_era gets special treatment; booleans get green/red
-            if dim == 'brand_guidelines_era':
+            # Color by PERFORMANCE (best=green, worst=red) — NOT by semantic meaning.
+            # Reason: when "No" outperforms "Yes" (e.g. personalisation), green should show "No".
+            ctrs = dim_df['avg_ctr'].tolist()
+            if not ctrs:
+                bar_cols = ['#4F46E5'] * len(dim_df)
+            elif dim == 'brand_guidelines_era':
+                # Special: pre=grey, post=indigo (directional, not performance)
                 bar_cols = ['#94a3b8' if 'Pre' in str(v) else '#4F46E5' for v in dim_df['dimension_value']]
-            elif dim in ('has_specific_number','has_action_verb','has_fomo_signal',
-                         'has_cultural_reference','has_personalisation','has_rich_media',
-                         'has_emoji','is_weekend'):
-                bar_cols = ['#ef4444' if 'No' in str(BOOL_LABELS.get(str(v), v)) or str(v) == 'False'
-                            else '#22c55e' for v in dim_df['dimension_value']]
             else:
-                # Gradient: highest = green, lowest = red
-                ctrs = dim_df['avg_ctr'].tolist()
-                mx = max(ctrs) if ctrs else 1
-                bar_cols = ['#22c55e' if c == mx else ('#ef4444' if c == min(ctrs) else '#4F46E5') for c in ctrs]
+                mx = max(ctrs)
+                mn = min(ctrs)
+                bar_cols = ['#22c55e' if c == mx else ('#ef4444' if c == mn else '#4F46E5') for c in ctrs]
 
             fig_cut = go.Figure(go.Bar(
                 x=dim_df['label'],
