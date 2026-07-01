@@ -2029,125 +2029,183 @@ elif page == '🧪 A/B Testing Hub':
         <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
     </div>
     <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
-        Head-to-head copy tests — winner flagged by CTR. Use these to build copy rules grounded in real experiments.
+        Head-to-head copy tests — what changed between A and B, and which won?
     </p>
     """, unsafe_allow_html=True)
 
     if ab.empty:
         st.info('No A/B test campaigns found for the selected filters.')
     else:
-        # ── Metric cards ──────────────────────────────────────────────────────────
+        ab['All_Platform_CTR']  = pd.to_numeric(ab.get('All_Platform_CTR', 0), errors='coerce').fillna(0)
+        ab['ab_lift_ctr']       = pd.to_numeric(ab.get('ab_lift_ctr', 0), errors='coerce').fillna(0)
+        ab['_is_winner']        = ab['ab_winner'].apply(lambda x: str(x).lower() in ('true','1') or x is True or (hasattr(x,'__float__') and float(x)==1.0 if not isinstance(x,bool) else x))
         camp_col = 'Campaign_ID' if 'Campaign_ID' in ab.columns else 'Campaign ID'
         n_campaigns = ab[camp_col].nunique() if camp_col in ab.columns else len(ab)
-        ab['ab_lift_ctr'] = pd.to_numeric(ab.get('ab_lift_ctr', 0), errors='coerce').fillna(0)
-        avg_lift = ab[ab['ab_lift_ctr'] > 0]['ab_lift_ctr'].mean()
-        n_months = ab['sent_month'].nunique() if 'sent_month' in ab.columns else 0
+        winners     = ab[ab['_is_winner']]
+        avg_lift    = ab[ab['ab_lift_ctr'] > 0]['ab_lift_ctr'].mean()
+        n_months    = ab['sent_month'].nunique() if 'sent_month' in ab.columns else 0
 
-        # Winner rate
-        ab['_is_winner'] = ab['ab_winner'].apply(lambda x: str(x).lower() in ('true','1') or x is True or (hasattr(x,'__float__') and float(x)==1.0))
-        winners = ab[ab['_is_winner']]
-
-        cards_html = f"""
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0">
-            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #4F46E5">
-                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">A/B Campaigns Tested</div>
-                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{n_campaigns:,}</div>
-                <div style="font-size:11px;color:#94a3b8">unique campaign IDs</div>
-            </div>
-            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #22c55e">
-                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Avg CTR Lift (winner)</div>
-                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{f'{avg_lift:.2f}%' if pd.notna(avg_lift) else '—'}</div>
-                <div style="font-size:11px;color:#94a3b8">winner vs loser variation</div>
-            </div>
-            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #f59e0b">
-                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Total Variations Tested</div>
-                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{len(ab):,}</div>
-                <div style="font-size:11px;color:#94a3b8">across {n_months} month(s)</div>
-            </div>
-            <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #0891b2">
-                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Winners Analysed</div>
-                <div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{len(winners):,}</div>
-                <div style="font-size:11px;color:#94a3b8">winning variations</div>
-            </div>
-        </div>
-        """
+        # ── Metric cards ──────────────────────────────────────────────────────
+        cards_html = (
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0">'
+            '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #4F46E5">'
+            '<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">A/B Campaigns</div>'
+            '<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">' + f'{n_campaigns:,}' + '</div>'
+            '<div style="font-size:11px;color:#94a3b8">unique experiments run</div>'
+            '</div>'
+            '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #22c55e">'
+            '<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Avg CTR Lift</div>'
+            '<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">' + (f'{avg_lift:.2f}%' if pd.notna(avg_lift) else '—') + '</div>'
+            '<div style="font-size:11px;color:#94a3b8">winner beats loser by</div>'
+            '</div>'
+            '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #f59e0b">'
+            '<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Total Variations</div>'
+            '<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">' + f'{len(ab):,}' + '</div>'
+            '<div style="font-size:11px;color:#94a3b8">across ' + f'{n_months}' + ' month(s)</div>'
+            '</div>'
+            '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #0891b2">'
+            '<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Winners Analysed</div>'
+            '<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">' + f'{len(winners):,}' + '</div>'
+            '<div style="font-size:11px;color:#94a3b8">winning variations</div>'
+            '</div>'
+            '</div>'
+        )
         st.markdown(cards_html, unsafe_allow_html=True)
 
-        # ── What wins in A/B tests ────────────────────────────────────────────
+        # ── Patterns from winners — only discriminating signals ───────────────
         pattern_items = []
         if not winners.empty:
             n = len(winners)
-            def _win_pct(col, val=True):
-                if col not in winners.columns: return None
-                count = winners[col].apply(lambda x: str(x).lower() in ('true','1') or x is True).sum()
-                return int(count), n
-            r = _win_pct('has_specific_number')
-            if r and r[0] >= r[1]//2: pattern_items.append(f"💰 **{r[0]}/{r[1]}** winning variations mentioned a specific ₹ or POPcoins value — specificity wins")
-            r = _win_pct('has_emoji')
-            if r and r[0] >= r[1]//2: pattern_items.append(f"😊 **{r[0]}/{r[1]}** winning variations had an emoji in the title")
-            r = _win_pct('has_action_verb')
-            if r and r[0] >= r[1]//2: pattern_items.append(f"🎯 **{r[0]}/{r[1]}** winning variations used a strong action verb")
+            # Only show signals where winner rate meaningfully differs from overall rate
+            # Skip has_specific_number (97% of all campaigns have it — not discriminating)
+            signals = [
+                ('has_emoji',           '😊', 'had an emoji in the title'),
+                ('has_action_verb',     '🎯', 'used a strong action verb (Win/Earn/Get/Claim)'),
+                ('has_fomo_signal',     '⏰', 'used urgency/FOMO language'),
+                ('has_cultural_reference', '🎭', 'referenced a cultural event (IPL, festival)'),
+            ]
+            for col, icon, desc in signals:
+                if col not in winners.columns: continue
+                win_rate = winners[col].apply(lambda x: str(x).lower() in ('true','1') or x is True).mean()
+                all_rate = ab[col].apply(lambda x: str(x).lower() in ('true','1') or x is True).mean() if col in ab.columns else 0.5
+                count = int(win_rate * n)
+                if win_rate >= 0.6 and abs(win_rate - all_rate) >= 0.1:  # meaningful signal
+                    pattern_items.append(f"{icon} **{count}/{n}** winning variations {desc} (vs {all_rate*100:.0f}% across all variations)")
+
             if 'tonality_parent' in winners.columns:
                 do_count = (winners['tonality_parent'] == 'DO').sum()
-                if do_count >= n//2: pattern_items.append(f"✅ **{do_count}/{n}** winning variations had a brand-compliant DO tone")
+                if do_count >= n * 0.6:
+                    pattern_items.append(f"✅ **{do_count}/{n}** winning variations used brand-compliant DO tone")
+
             if 'title_length_bucket' in winners.columns:
-                best_len = winners['title_length_bucket'].value_counts().idxmax()
-                pattern_items.append(f"📏 Most winning variations had **{best_len}** title length")
+                best_len = winners['title_length_bucket'].value_counts()
+                if not best_len.empty and best_len.iloc[0] / n >= 0.5:
+                    pattern_items.append(f"📏 **{best_len.iloc[0]}/{n}** winning variations had **{best_len.index[0]}** title length")
 
         if pattern_items:
-            render_insight_box('What wins in A/B tests — patterns from your real experiments', pattern_items, box_type='success')
+            render_insight_box('What wins in A/B tests — your real experiments tell you', pattern_items, box_type='success')
+        elif winners.empty:
+            st.info('Not enough winner data to detect patterns. Check that ab_winner is correctly flagged.')
+
         st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-        # ── CTR lift distribution ─────────────────────────────────────────────
+        # ── CTR lift histogram — auto-scaled ──────────────────────────────────
         st.markdown('<div class="section-header">CTR Lift Distribution</div>', unsafe_allow_html=True)
-        st.caption('How much did the winning variation beat the losing variation? Positive = winner clearly better.')
-        if not ab[ab['ab_lift_ctr'] > 0].empty:
-            lift_data = ab[ab['ab_lift_ctr'] > 0].copy()
+        st.caption('How much did the winning variation beat the losing one? Each bar = one A/B experiment.')
+        lift_data = ab[ab['ab_lift_ctr'] > 0]['ab_lift_ctr'].dropna()
+        if not lift_data.empty:
+            p95 = float(lift_data.quantile(0.95))  # cap at 95th percentile to avoid outlier distortion
+            lift_plot = lift_data[lift_data <= p95 * 1.5]
             fig_lift = go.Figure(go.Histogram(
-                x=lift_data['ab_lift_ctr'], nbinsx=20,
-                marker_color='#4F46E5', opacity=0.8,
+                x=lift_plot, nbinsx=min(30, len(lift_plot)//3 + 5),
+                marker_color='#4F46E5', opacity=0.85,
                 hovertemplate='CTR Lift: %{x:.2f}%<br>Count: %{y}<extra></extra>',
             ))
-            fig_lift.add_vline(x=float(avg_lift) if pd.notna(avg_lift) else 0,
-                               line_dash='dash', line_color='#22c55e', line_width=2,
-                               annotation_text=f'Avg: {avg_lift:.2f}%' if pd.notna(avg_lift) else '')
+            if pd.notna(avg_lift):
+                fig_lift.add_vline(x=float(avg_lift), line_dash='dash', line_color='#22c55e',
+                                   line_width=2,
+                                   annotation_text=f'Avg: {avg_lift:.2f}%',
+                                   annotation_position='top right',
+                                   annotation_font_color='#22c55e')
             fig_lift.update_layout(
-                height=280, margin=dict(t=20, b=20, l=10, r=10),
+                height=260, margin=dict(t=20,b=20,l=10,r=10),
                 plot_bgcolor='white', paper_bgcolor='white',
-                xaxis=dict(title='CTR Lift (%)', showgrid=True, gridcolor='#f1f5f9'),
+                xaxis=dict(title='CTR Lift (%)', showgrid=True, gridcolor='#f1f5f9',
+                           range=[0, max(p95 * 1.2, avg_lift * 2 if pd.notna(avg_lift) else 5)]),
                 yaxis=dict(title='Number of Tests', showgrid=True, gridcolor='#f1f5f9'),
             )
             st.plotly_chart(fig_lift, use_container_width=True)
+            if len(lift_data) > len(lift_plot):
+                st.caption(f'ℹ️ {len(lift_data)-len(lift_plot)} outlier(s) above {p95*1.5:.1f}% hidden for readability.')
 
-        # ── A/B Results table ─────────────────────────────────────────────────
-        st.markdown('<div class="section-header">All A/B Test Results</div>', unsafe_allow_html=True)
+        # ── Paired A vs B comparison cards ────────────────────────────────────
+        st.markdown('<div class="section-header">Campaign A vs B — Side by Side</div>', unsafe_allow_html=True)
         title_col_ab = 'Android_Message_Title_Android_Web_Title_iOS'
-        show_cols = [camp_col, 'bu', 'sent_month', 'Variation', title_col_ab,
-                     'All_Platform_CTR', 'ab_lift_ctr', '_is_winner', 'tonality',
-                     'emoji_count_bucket', 'title_length_bucket', 'has_specific_number']
-        show_cols = [c for c in show_cols if c in ab.columns]
-        tbl = ab[show_cols].copy()
-        if '_is_winner' in tbl.columns:
-            tbl['_is_winner'] = tbl['_is_winner'].apply(lambda x: '🏆 Winner' if x else '')
-        if 'All_Platform_CTR' in tbl.columns:
-            tbl['All_Platform_CTR'] = pd.to_numeric(tbl['All_Platform_CTR'], errors='coerce').apply(lambda x: f'{x:.2f}%' if pd.notna(x) else '—')
-        if 'ab_lift_ctr' in tbl.columns:
-            tbl['ab_lift_ctr'] = pd.to_numeric(tbl['ab_lift_ctr'], errors='coerce').apply(lambda x: f'{x:+.2f}%' if pd.notna(x) and x != 0 else '—')
-        tbl = tbl.rename(columns={
-            camp_col: 'Campaign ID', '_is_winner': 'Result',
-            'All_Platform_CTR': 'CTR', 'ab_lift_ctr': 'CTR Lift',
-            title_col_ab: 'Title (truncated)',
-        })
-        if 'Title (truncated)' in tbl.columns:
-            tbl['Title (truncated)'] = tbl['Title (truncated)'].astype(str).str[:50]
-        sort_c = 'Campaign ID' if 'Campaign ID' in tbl.columns else tbl.columns[0]
-        st.dataframe(tbl.sort_values([sort_c, 'CTR'], ascending=[True, False]), use_container_width=True, hide_index=True)
+
+        # BU filter for the card view
+        bus_in_ab = sorted(ab['bu'].dropna().unique().tolist()) if 'bu' in ab.columns else []
+        if len(bus_in_ab) > 1:
+            sel_bu_ab = st.selectbox('Show campaigns from BU:', ['All'] + bus_in_ab)
+            ab_view = ab[ab['bu'] == sel_bu_ab] if sel_bu_ab != 'All' else ab
+        else:
+            ab_view = ab
+
+        # Group by campaign ID and show paired rows
+        if camp_col in ab_view.columns:
+            ab_view = ab_view.sort_values([camp_col, 'All_Platform_CTR'], ascending=[True, False])
+            grouped = ab_view.groupby(camp_col)
+            shown = 0
+            for camp_id, group in grouped:
+                if len(group) < 2: continue
+                if shown >= 20: st.caption('Showing first 20 A/B experiments.'); break
+                shown += 1
+
+                rows = group.reset_index(drop=True)
+                winner_row = rows[rows['_is_winner'] == True].iloc[0] if (rows['_is_winner'] == True).any() else None
+                loser_rows = rows[rows['_is_winner'] != True]
+                loser_row  = loser_rows.iloc[0] if not loser_rows.empty else rows.iloc[-1]
+
+                if winner_row is None: winner_row = rows.iloc[0]
+
+                w_ctr   = float(winner_row.get('All_Platform_CTR', 0) or 0)
+                l_ctr   = float(loser_row.get('All_Platform_CTR', 0) or 0)
+                lift    = float(winner_row.get('ab_lift_ctr', 0) or 0)
+                bu_name = str(winner_row.get('bu', '—'))
+                month   = str(winner_row.get('sent_month', '—'))
+                w_title = str(winner_row.get(title_col_ab, '—'))
+                l_title = str(loser_row.get(title_col_ab, '—'))
+                w_tone  = str(winner_row.get('tonality', '—'))
+                l_tone  = str(loser_row.get('tonality', '—'))
+
+                card_html = (
+                    '<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;'
+                    'padding:16px;margin-bottom:12px">'
+                    '<div style="display:flex;justify-content:space-between;margin-bottom:10px">'
+                    '<span style="font-size:12px;color:#64748b;font-weight:700">' + bu_name + ' · ' + month + '</span>'
+                    '<span style="background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700">+' + f'{lift:.2f}% CTR lift' + '</span>'
+                    '</div>'
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+                    '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px">'
+                    '<div style="font-size:10px;font-weight:700;color:#15803d;margin-bottom:4px">🏆 WINNER · ' + f'{w_ctr:.2f}% CTR' + '</div>'
+                    '<div style="font-size:13px;font-weight:600;color:#0f172a">&ldquo;' + w_title + '&rdquo;</div>'
+                    '<div style="font-size:11px;color:#64748b;margin-top:4px"><em>' + w_tone + '</em></div>'
+                    '</div>'
+                    '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px">'
+                    '<div style="font-size:10px;font-weight:700;color:#dc2626;margin-bottom:4px">LOSER · ' + f'{l_ctr:.2f}% CTR' + '</div>'
+                    '<div style="font-size:13px;color:#374151">&ldquo;' + l_title + '&rdquo;</div>'
+                    '<div style="font-size:11px;color:#64748b;margin-top:4px"><em>' + l_tone + '</em></div>'
+                    '</div>'
+                    '</div>'
+                    '</div>'
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
 
         # ── Next steps ────────────────────────────────────────────────────────
         render_insight_box('Recommended next steps', [
-            "📋 **Codify the patterns** — if 8/10 winning A/B variations had a specific ₹ amount, make that a mandatory brief requirement",
-            "🔄 **Always run A/B tests** — even small tests (2 variations, same audience) build your copy learning database over time",
-            "✍️ **Next test to run** — pick the brand voice finding from Copy Intelligence and test a DO-tone vs DON'T-tone version of the same campaign",
+            '📋 **Read the winner cards above** — look for the pattern: what did the winning copy have that the loser didn\'t?',
+            '🔄 **Run more A/B tests** — especially for your top BUs; 255 experiments is a good start but more tests = better rules',
+            '✍️ **Codify the winner patterns** — if winners consistently use action verbs + specific ₹ amounts, make that the default brief template',
+            '📖 **Cross-reference with Copy Intelligence** — do the A/B winners match the copy rules we derived from all campaigns?',
         ], box_type='success')
 
 
