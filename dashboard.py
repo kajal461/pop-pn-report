@@ -22,6 +22,47 @@ st.set_page_config(
     initial_sidebar_state='expanded',
 )
 
+# ── Password gate — protects business-sensitive data ──────────────────────────
+def _check_password() -> bool:
+    """Simple password gate. Password stored in Streamlit secrets or env var."""
+    import os
+    # Get password from Streamlit secrets (deployed) or env var (local)
+    try:
+        correct = st.secrets.get('DASHBOARD_PASSWORD', os.getenv('DASHBOARD_PASSWORD', ''))
+    except Exception:
+        correct = os.getenv('DASHBOARD_PASSWORD', '')
+
+    if not correct:
+        return True  # No password configured — allow access (local dev)
+
+    if 'authenticated' not in st.session_state:
+        st.session_state['authenticated'] = False
+
+    if st.session_state['authenticated']:
+        return True
+
+    st.markdown("""
+    <div style="max-width:400px;margin:80px auto;text-align:center">
+        <div style="font-size:48px;margin-bottom:16px">📱</div>
+        <h2 style="font-size:24px;font-weight:800;color:#0f172a;margin-bottom:8px">POP PN Report</h2>
+        <p style="color:#64748b;font-size:14px;margin-bottom:24px">Enter the access password to view this report.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        pwd = st.text_input('Password', type='password', placeholder='Enter password...')
+        if st.button('Access Report', use_container_width=True, type='primary'):
+            if pwd == correct:
+                st.session_state['authenticated'] = True
+                st.rerun()
+            else:
+                st.error('Incorrect password. Please try again.')
+    return False
+
+if not _check_password():
+    st.stop()
+
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
