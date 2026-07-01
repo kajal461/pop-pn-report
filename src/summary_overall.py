@@ -46,4 +46,6 @@ def build_summary_overall(master: pd.DataFrame) -> pd.DataFrame:
             monthly[f'mom_{col}_delta']     = monthly[col].diff()
             monthly[f'mom_{col}_delta_pct'] = monthly[col].pct_change().mul(100).round(2)
 
-    return monthly
+    # Normalize output to underscore format — consistent with BigQuery output
+    rename = {col: col.replace(' ', '_') for col in monthly.columns if ' ' in col}
+    return monthly.rename(columns=rename) if rename else monthly

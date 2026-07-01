@@ -82,4 +82,8 @@ def build_summary_bu(master: pd.DataFrame) -> pd.DataFrame:
         weekly.groupby('bu')[COL_ALL_CTR].pct_change().mul(100).round(2)
     )
 
-    return pd.concat([monthly, weekly], ignore_index=True)
+    result = pd.concat([monthly, weekly], ignore_index=True)
+    # Normalize output column names to underscore format — consistent with BigQuery output
+    # so dashboard code works regardless of which path (BigQuery vs recomputed) produced this
+    rename = {col: col.replace(' ', '_') for col in result.columns if ' ' in col}
+    return result.rename(columns=rename) if rename else result
