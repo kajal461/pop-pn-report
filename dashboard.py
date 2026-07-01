@@ -1489,6 +1489,7 @@ elif page == '📖 Brand Guidelines Impact':
         <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
     </div>
     """, unsafe_allow_html=True)
+    st.markdown('<p style="color:#64748b;font-size:13px;margin:4px 0 12px">Did the brand book (launched June 2026) improve CTR? Pre vs post comparison across all BUs — with scale-up context.</p>', unsafe_allow_html=True)
 
     st.markdown("""
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 18px;margin:12px 0 16px">
@@ -3398,7 +3399,7 @@ elif page == '📡 Channel Intelligence':
     if ceo_items:
         render_insight_box('Executive Summary — Channel Health', ceo_items)
 
-    render_insight_box('Actions before next review', [
+    render_insight_box('Recommended next steps', [
         '📡 **If reachability < 85%:** Reduce per-user weekly PN frequency cap or expand segment sizes',
         '📉 **If CTR trend declining:** Deep-dive into bottom 20% of campaigns — identify what changed in copy/targeting',
         '🎯 **If concentration > 60%:** Brief the team to develop 5 new high-performing campaign strategies to reduce dependency',
