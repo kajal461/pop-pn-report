@@ -75,6 +75,8 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     - Convert non-serialisable types (Period, etc.) to string
     """
     df = _sanitize_columns(df.copy())
+    # Remove any duplicate column names (can happen when merging DataFrames)
+    df = df.loc[:, ~df.columns.duplicated()]
     for col in df.columns:
         # Auto-detect numeric columns: if ≥80% of non-null values parse as numbers → float
         if df[col].dtype == object:

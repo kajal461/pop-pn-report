@@ -143,17 +143,28 @@ def main() -> None:
         if not existing_ab.empty and len(ab_results_new) < len(existing_ab):
             # New run found fewer A/B tests — merge to preserve history
             import pandas as _pd
-            ab_combined = _pd.concat([ab_results_new, existing_ab], ignore_index=True)
-            camp_col_ab = 'Campaign_ID' if 'Campaign_ID' in ab_combined.columns else 'Campaign ID'
-            var_col_ab  = next((c for c in ['Variation','Campaign_Version_Name','Campaign Version Name']
-                                if c in ab_combined.columns), None)
-            dedup_ab = [c for c in [camp_col_ab, var_col_ab] if c]
-            ab_results = ab_combined.drop_duplicates(subset=dedup_ab, keep='first') if dedup_ab else ab_combined
-            print(f'  A/B history preserved: {len(existing_ab)} existing + {len(ab_results_new)} new → {len(ab_results)} total')
+            # New export has fewer A/B tests than history — preserve existing historical data.
+            # Only add truly NEW campaign IDs not already in historical A/B data.
+            camp_col_ab = next((c for c in ['Campaign_ID','Campaign ID'] if c in existing_ab.columns), None)
+            if camp_col_ab and camp_col_ab in ab_results_new.columns:
+                hist_ids = set(existing_ab[camp_col_ab].astype(str).unique())
+                new_ids  = set(ab_results_new[camp_col_ab].astype(str).unique())
+                truly_new = ab_results_new[ab_results_new[camp_col_ab].astype(str).isin(new_ids - hist_ids)]
+                if not truly_new.empty:
+                    ab_results = _pd.concat([existing_ab, truly_new], ignore_index=True)
+                    ab_results = ab_results.loc[:, ~ab_results.columns.duplicated()]
+                    print(f'  A/B history: kept {len(existing_ab)} historical + {len(truly_new)} new campaigns → {len(ab_results)} total')
+                else:
+                    ab_results = existing_ab.copy()
+                    print(f'  A/B history: kept all {len(existing_ab)} historical A/B rows (no new A/B campaigns in this export)')
+            else:
+                ab_results = existing_ab.copy()
+                print(f'  A/B history: kept all {len(existing_ab)} historical A/B rows')
         else:
             ab_results = ab_results_new
-    except Exception:
-        ab_results = ab_results_new  # first run or BQ error — use what we have
+    except Exception as _e:
+        print(f'  ⚠️  A/B history load failed ({type(_e).__name__}: {_e}) — using current run only')
+        ab_results = ab_results_new
 
     print(f'   -> overall:{len(summary_overall)}r  by_bu:{len(summary_bu)}r  '
           f'top_bottom:{len(top_bottom)}r  copy:{len(copy_analysis)}r  '
