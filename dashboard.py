@@ -2726,7 +2726,7 @@ elif page == '📦 Segment Intelligence':
 
     # ── Section 1: Segment Type Performance ──────────────────────────────────
     st.markdown('<div class="section-header">Targeting Approach — Which Strategy Wins?</div>', unsafe_allow_html=True)
-    st.caption('This is the CEO-level question: does precision targeting outperform broadcast? Min 5 campaigns per type for reliability.')
+    st.caption('Does precision targeting outperform broadcast? Min 5 campaigns per type for reliability.')
 
     type_perf = seg_m.groupby('seg_type').agg(
         campaigns=(camp_col_s,'nunique'),
@@ -2776,7 +2776,7 @@ elif page == '📦 Segment Intelligence':
 
     # ── Section 2: Segment Lifecycle ──────────────────────────────────────────
     st.markdown('<div class="section-header" style="margin-top:16px">Segment Lifecycle — Acquisition vs Activation vs Retention vs Winback</div>', unsafe_allow_html=True)
-    st.caption('Where are you investing your PN budget? CEO question: are we over-investing in retention and under-investing in acquisition?')
+    st.caption('Where are you investing your PN budget? Are we over-investing in retention and under-investing in acquisition?')
 
     lifecycle_perf = seg_m.groupby('lifecycle').agg(
         campaigns=(camp_col_s,'nunique'),
@@ -2939,7 +2939,7 @@ elif page == '📦 Segment Intelligence':
         if ret > 0 and acq > 0:
             ratio = ret/acq
             if ratio > 3:
-                seg_insights.append(f"⚠️ **Lifecycle imbalance:** You send **{ratio:.0f}x more retention campaigns** than acquisition campaigns. CEO risk: over-investing in existing users, under-investing in growth.")
+                seg_insights.append(f"⚠️ **Lifecycle imbalance:** You send **{ratio:.0f}x more retention campaigns** than acquisition campaigns. Strategic concern: over-investing in existing users, under-investing in growth.")
 
     # Conversion concentration
     if total_convs > 0 and not seg_perf.empty:
@@ -2960,7 +2960,7 @@ elif page == '📦 Segment Intelligence':
         best_scale = scale_segs.iloc[0]
         seg_insights.append(f"🚀 **Best scalable segment:** '{best_scale['seg_clean']}' achieves **{best_scale['avg_ctr']:.2f}% CTR** at **{best_scale['total_sent']:,.0f} sends** — replicate this targeting logic across other BUs.")
 
-    render_insight_box('Segment Intelligence — CEO/CMO Key Findings', seg_insights)
+    render_insight_box('Segment Intelligence — Key Findings', seg_insights)
 
     render_insight_box('Recommended next steps', [
         "🎯 **Invest in behavioral targeting** — 'Has done X in last 30 days' segments consistently outperform custom lists. Work with MoEngage team to build more behavioral triggers.",
@@ -2994,7 +2994,7 @@ elif page == '📡 Channel Intelligence':
         <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
     </div>
     <p style="color:#64748b;font-size:13px;margin:4px 0 20px">
-        Is our PN channel a sustainable business asset? Five CEO-level questions answered from the data.
+        Is our PN channel a sustainable business asset? Five strategic questions answered from your data.
     </p>
     """, unsafe_allow_html=True)
 
@@ -3256,8 +3256,11 @@ elif page == '📡 Channel Intelligence':
     if 'Android_Sent' in m.columns and 'Ios_Sent' in m.columns:
         android_sent  = m['Android_Sent'].sum()
         ios_sent      = m['Ios_Sent'].sum()
-        android_ctr   = (m['Android_CTR'] * m['Android_Sent']).sum() / android_sent if android_sent>0 else 0
-        ios_ctr       = (m['Ios_CTR'] * m['Ios_Sent']).sum() / ios_sent if ios_sent>0 else 0
+        # Use raw clicks ÷ sent (not pre-computed CTR column) to avoid small-sample distortion
+        android_clicks = m['Android_Clicks'].sum() if 'Android_Clicks' in m.columns else 0
+        ios_clicks     = m['Ios_Clicks'].sum() if 'Ios_Clicks' in m.columns else 0
+        android_ctr    = android_clicks / android_sent * 100 if android_sent > 0 else 0
+        ios_ctr        = ios_clicks    / ios_sent    * 100 if ios_sent    > 0 else 0
         android_impr  = m['Android_Impressions'].sum() if 'Android_Impressions' in m.columns else 0
         ios_impr      = m['Ios_Impressions'].sum() if 'Ios_Impressions' in m.columns else 0
         android_reach = android_impr / android_sent if android_sent>0 else 0
@@ -3289,8 +3292,9 @@ elif page == '📡 Channel Intelligence':
         # Platform CTR by BU
         if 'bu' in m.columns:
             plat_bu = m.groupby('bu').apply(lambda g: pd.Series({
-                'android_ctr': (g['Android_CTR']*g['Android_Sent']).sum()/g['Android_Sent'].sum() if g['Android_Sent'].sum()>0 else 0,
-                'ios_ctr': (g['Ios_CTR']*g['Ios_Sent']).sum()/g['Ios_Sent'].sum() if g['Ios_Sent'].sum()>0 else 0,
+                'android_ctr': (g['Android_Clicks'].sum()/g['Android_Sent'].sum()*100) if ('Android_Clicks' in g.columns and g['Android_Sent'].sum()>0) else 0,
+                'ios_ctr': (g['Ios_Clicks'].sum()/g['Ios_Sent'].sum()*100) if ('Ios_Clicks' in g.columns and g['Ios_Sent'].sum()>0) else 0,
+                'ios_sent': g['Ios_Sent'].sum(),
             })).reset_index()
             plat_bu = plat_bu[(plat_bu['android_ctr']>0) | (plat_bu['ios_ctr']>0)]
             plat_bu[['android_ctr','ios_ctr']] = plat_bu[['android_ctr','ios_ctr']].clip(upper=100)
@@ -3326,7 +3330,7 @@ elif page == '📡 Channel Intelligence':
     else:
         st.info('Platform-level CTR columns (Android_CTR, Ios_CTR) not found in the data.')
 
-    # ── Key takeaways for CEO ─────────────────────────────────────────────────
+    # ── Key takeaways ─────────────────────────────────────────────────────────
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
     ceo_items = []
     # Reachability
@@ -3335,7 +3339,7 @@ elif page == '📡 Channel Intelligence':
         ceo_items.append(f"📡 **Channel reach: {lr:.1f}%** of targeted users are receiving PNs. {'Healthy.' if lr>=85 else 'Warning: frequency caps blocking delivery. Expand segments or reduce cadence.'}")
     # Improvement
     if 'overall_delta' in locals():
-        ceo_items.append(f"{'📈' if overall_delta>0 else '📉'} **CTR trend: {overall_delta:+.2f}% over 3 months** — channel is {'improving' if overall_delta>0 else 'declining'}. {'Keep scaling.' if overall_delta>0 else 'Root cause needed before CEO meeting.'}")
+        ceo_items.append(f"{'📈' if overall_delta>0 else '📉'} **CTR trend: {overall_delta:+.2f}% over 3 months** — channel is {'improving' if overall_delta>0 else 'declining'}. {'Keep scaling.' if overall_delta>0 else 'Root cause analysis needed.'}")
     # Concentration
     if 'top5_share' in locals():
         ceo_items.append(f"{'🚨' if top5_share>60 else '⚠️' if top5_share>40 else '✅'} **Concentration: top 5 campaigns = {top5_share:.0f}% of conversions.** {'High dependency risk.' if top5_share>60 else 'Moderate. Diversify.' if top5_share>40 else 'Healthy spread.'}")
@@ -3347,7 +3351,7 @@ elif page == '📡 Channel Intelligence':
         ceo_items.append(f"📱 **iOS CTR: {ios_ctr:.2f}% vs Android: {android_ctr:.2f}%.** {'iOS users are higher-intent — prioritise premium offers there.' if ios_ctr>android_ctr else 'Android dominates. Review iOS notification permission strategy.'}")
 
     if ceo_items:
-        render_insight_box('Executive Summary — Channel Health for CEO', ceo_items)
+        render_insight_box('Executive Summary — Channel Health', ceo_items)
 
     render_insight_box('Actions before next review', [
         '📡 **If reachability < 85%:** Reduce per-user weekly PN frequency cap or expand segment sizes',
