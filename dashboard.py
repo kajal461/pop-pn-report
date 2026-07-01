@@ -462,6 +462,7 @@ page = st.sidebar.radio('Navigate', [
     '🧪 A/B Testing Hub',
     '⏰ Timing & Frequency',
     '📦 Segment Intelligence',
+    '📡 Channel Intelligence',
 ])
 
 all_bus = sorted(master['bu'].dropna().unique().tolist()) if 'bu' in master.columns else []
@@ -2967,4 +2968,391 @@ elif page == '📦 Segment Intelligence':
         "🔴 **Fix over-messaged segments** — reduce weekly send cadence for segments below 80% reachability, or expand the segment size to reduce individual user frequency.",
         "🧪 **Cross-BU segment sharing** — if 'UPI Non-card NTU' works for UPI Acquisition, test it for POPcard Acquisition as well. The cross-BU heatmap shows untested combinations.",
         "📈 **Scale concentration risk** — if top 3 segments drive 70%+ of conversions, develop 5 more high-performing segment strategies to reduce dependency.",
+    ], box_type='success')
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 9 — CHANNEL INTELLIGENCE
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == '📡 Channel Intelligence':
+    m = filtered_master.copy()
+    for col in ['All_Platform_CTR','All_Platform_Sent','All_Platform_Clicks',
+                'All_Platform_After_FC_Removal','All_Platform_Installed_Users_in_segment',
+                'primary_conversions','All_Platform_Impressions',
+                'Android_Sent','Ios_Sent','Android_CTR','Ios_CTR',
+                'Android_Impressions','Ios_Impressions','All_Platform_FCM_Delivery_Rate']:
+        if col in m.columns:
+            m[col] = pd.to_numeric(m[col], errors='coerce').fillna(0)
+
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(x,x) for x in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">📡 Channel Intelligence</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 20px">
+        Is our PN channel a sustainable business asset? Five CEO-level questions answered from the data.
+    </p>
+    """, unsafe_allow_html=True)
+
+    camp_col_ci = 'Campaign_ID' if 'Campaign_ID' in m.columns else 'Campaign ID'
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1: ARE WE REACHING OUR USERS?
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-header">1 · Are We Reaching Our Users? (Reachability Trend)</div>', unsafe_allow_html=True)
+    st.caption('Reachability = users who actually received the PN ÷ users in the targeted segment. Drop = frequency cap blocking delivery.')
+
+    if 'All_Platform_After_FC_Removal' in m.columns and 'All_Platform_Installed_Users_in_segment' in m.columns and 'sent_month' in m.columns:
+        reach_monthly = m.groupby('sent_month').apply(lambda g: pd.Series({
+            'total_segment_users': g['All_Platform_Installed_Users_in_segment'].sum(),
+            'total_after_fc': g['All_Platform_After_FC_Removal'].sum(),
+            'campaign_count': g[camp_col_ci].nunique() if camp_col_ci in g.columns else len(g),
+        })).reset_index()
+        reach_monthly['reachability_pct'] = (reach_monthly['total_after_fc'] / reach_monthly['total_segment_users'].replace(0, float('nan')) * 100).round(1)
+        reach_monthly = reach_monthly.dropna(subset=['reachability_pct']).sort_values('sent_month')
+
+        if not reach_monthly.empty:
+            col_r1, col_r2 = st.columns([3,1])
+            with col_r1:
+                fig_reach = go.Figure()
+                fig_reach.add_trace(go.Scatter(
+                    x=reach_monthly['sent_month'], y=reach_monthly['reachability_pct'],
+                    mode='lines+markers+text',
+                    text=reach_monthly['reachability_pct'].apply(lambda x: f'{x:.1f}%'),
+                    textposition='top center', textfont=dict(size=12, color='#4F46E5'),
+                    line=dict(color='#4F46E5', width=3), marker=dict(size=10),
+                    hovertemplate='%{x}<br>Reachability: %{y:.1f}%<extra></extra>',
+                ))
+                fig_reach.add_hline(y=80, line_dash='dash', line_color='#f59e0b', line_width=1.5,
+                                    annotation_text='80% warning threshold', annotation_position='right')
+                fig_reach.update_layout(
+                    height=280, margin=dict(t=20,b=20,l=10,r=10),
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+                    yaxis=dict(title='Reachability (%)', range=[0,110], showgrid=True, gridcolor='#f1f5f9'),
+                )
+                st.plotly_chart(fig_reach, use_container_width=True)
+
+            with col_r2:
+                latest_r = reach_monthly.iloc[-1]
+                prev_r = reach_monthly.iloc[-2] if len(reach_monthly)>1 else None
+                r_delta = (latest_r['reachability_pct'] - prev_r['reachability_pct']) if prev_r is not None else 0
+                r_col = '#22c55e' if latest_r['reachability_pct'] >= 85 else ('#f59e0b' if latest_r['reachability_pct'] >= 70 else '#ef4444')
+                arrow = '↑' if r_delta >= 0 else '↓'
+                d_col = '#22c55e' if r_delta >= 0 else '#ef4444'
+                st.markdown(f"""
+                <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid {r_col}">
+                    <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Latest Reachability</div>
+                    <div style="font-size:36px;font-weight:800;color:{r_col};margin:8px 0">{latest_r['reachability_pct']:.1f}%</div>
+                    <div style="font-size:13px;color:{d_col};font-weight:600">{arrow} {abs(r_delta):.1f}% MOM</div>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:6px">{'✅ Healthy' if latest_r['reachability_pct']>=85 else '⚠️ FC capping users' if latest_r['reachability_pct']>=70 else '🚨 Severe FC hit'}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2: ARE WE GETTING BETTER?
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-header">2 · Are We Getting Better? (CTR Improvement Trend)</div>', unsafe_allow_html=True)
+    st.caption('Campaign-weighted avg CTR per month. Controls for volume — a genuine improvement signal, not a scale-up artifact.')
+
+    if 'sent_month' in m.columns and 'All_Platform_CTR' in m.columns:
+        improve = m.groupby('sent_month').apply(lambda g: pd.Series({
+            'weighted_ctr': (g['All_Platform_CTR']*g['All_Platform_Sent']).sum() / g['All_Platform_Sent'].sum() if g['All_Platform_Sent'].sum()>0 else 0,
+            'campaigns': g[camp_col_ci].nunique() if camp_col_ci in g.columns else len(g),
+            'total_sent': g['All_Platform_Sent'].sum(),
+        })).reset_index().sort_values('sent_month')
+
+        if not improve.empty:
+            improve['weighted_ctr'] = improve['weighted_ctr'].clip(upper=100)
+            col_i1, col_i2 = st.columns([3,1])
+            with col_i1:
+                bar_cols_i = []
+                for i, ctr in enumerate(improve['weighted_ctr']):
+                    if i == 0: bar_cols_i.append('#94a3b8')
+                    elif ctr > improve['weighted_ctr'].iloc[i-1]: bar_cols_i.append('#22c55e')
+                    else: bar_cols_i.append('#ef4444')
+
+                fig_imp = go.Figure(go.Bar(
+                    x=improve['sent_month'], y=improve['weighted_ctr'],
+                    marker_color=bar_cols_i,
+                    text=improve['weighted_ctr'].apply(lambda x: f'{x:.2f}%'),
+                    textposition='outside', textfont=dict(size=12),
+                    hovertemplate='%{x}<br>Weighted CTR: %{y:.2f}%<br>Campaigns: %{customdata}<extra></extra>',
+                    customdata=improve['campaigns'],
+                ))
+                fig_imp.update_layout(
+                    height=280, margin=dict(t=30,b=20,l=10,r=10),
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    xaxis=dict(type='category', showgrid=False),
+                    yaxis=dict(title='Weighted Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+                )
+                st.plotly_chart(fig_imp, use_container_width=True)
+
+            with col_i2:
+                first_ctr = improve['weighted_ctr'].iloc[0]
+                last_ctr  = improve['weighted_ctr'].iloc[-1]
+                overall_delta = last_ctr - first_ctr
+                trend = '📈 Improving' if overall_delta > 0.1 else ('📉 Declining' if overall_delta < -0.1 else '➡️ Stable')
+                t_col = '#22c55e' if overall_delta > 0.1 else ('#ef4444' if overall_delta < -0.1 else '#f59e0b')
+                st.markdown(f"""
+                <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid {t_col}">
+                    <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">3-Month Trend</div>
+                    <div style="font-size:28px;font-weight:800;color:{t_col};margin:8px 0">{trend}</div>
+                    <div style="font-size:13px;color:#0f172a">{first_ctr:.2f}% → {last_ctr:.2f}%</div>
+                    <div style="font-size:12px;color:{t_col};margin-top:4px;font-weight:600">{overall_delta:+.2f}% net change</div>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:6px">Green = MOM improvement<br>Red = MOM decline</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 3: ARE WE OVER-DEPENDENT ON A FEW CAMPAIGNS?
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-header">3 · Are We Over-Dependent? (Campaign Concentration Risk)</div>', unsafe_allow_html=True)
+    st.caption('What % of total conversions come from our top 5 campaigns? >60% = high concentration risk.')
+
+    if 'primary_conversions' in m.columns and camp_col_ci in m.columns:
+        camp_convs = m.groupby(camp_col_ci).agg(
+            conversions=('primary_conversions','sum'),
+            ctr=('All_Platform_CTR','mean'),
+            sent=('All_Platform_Sent','sum'),
+            bu=('bu','first'),
+        ).reset_index().sort_values('conversions', ascending=False)
+
+        total_convs_ci = camp_convs['conversions'].sum()
+        if total_convs_ci > 0:
+            camp_convs['conv_share'] = camp_convs['conversions'] / total_convs_ci * 100
+            camp_convs['cumulative'] = camp_convs['conv_share'].cumsum()
+
+            top1_share  = camp_convs.head(1)['conv_share'].sum()
+            top5_share  = camp_convs.head(5)['conv_share'].sum()
+            top10_share = camp_convs.head(10)['conv_share'].sum()
+
+            conc_col = '#ef4444' if top5_share>70 else ('#f59e0b' if top5_share>50 else '#22c55e')
+            risk_label = '🚨 High Risk' if top5_share>70 else ('⚠️ Moderate Risk' if top5_share>50 else '✅ Healthy')
+
+            col_c1, col_c2, col_c3 = st.columns(3)
+            for col_cx, label, val in [(col_c1,'Top 1 Campaign',top1_share),(col_c2,'Top 5 Campaigns',top5_share),(col_c3,'Top 10 Campaigns',top10_share)]:
+                c = '#ef4444' if val>60 else ('#f59e0b' if val>40 else '#22c55e')
+                col_cx.markdown(f"""
+                <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px;text-align:center;border-top:4px solid {c}">
+                    <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">{label}</div>
+                    <div style="font-size:30px;font-weight:800;color:{c};margin:6px 0">{val:.0f}%</div>
+                    <div style="font-size:11px;color:#94a3b8">of all conversions</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div style="background:{'#fef2f2' if top5_share>60 else '#fffbeb'};border:1px solid {'#fecaca' if top5_share>60 else '#fde047'};
+                        border-radius:8px;padding:12px 16px;margin:12px 0">
+                <strong style="color:{'#dc2626' if top5_share>60 else '#854d0e'}">{risk_label}:</strong>
+                <span style="font-size:13px;color:{'#7f1d1d' if top5_share>60 else '#713f12'}">
+                Your top 5 campaigns account for <strong>{top5_share:.0f}%</strong> of all conversions.
+                {'If any of these campaigns underperform next month, channel metrics will drop sharply.' if top5_share>60 else
+                 'Moderate dependency. Diversify with 5 more high-performing campaign strategies.' if top5_share>40 else
+                 'Healthy spread. No single campaign controls your channel outcomes.'}
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Cumulative concentration curve
+            top20 = camp_convs.head(20).copy()
+            fig_conc = go.Figure()
+            fig_conc.add_trace(go.Bar(
+                x=list(range(1,len(top20)+1)), y=top20['conv_share'],
+                marker_color='#4F46E5', name='Individual campaign share',
+                hovertemplate='Campaign #%{x}<br>Share: %{y:.1f}%<extra></extra>',
+            ))
+            fig_conc.add_trace(go.Scatter(
+                x=list(range(1,len(top20)+1)), y=top20['cumulative'],
+                mode='lines+markers', name='Cumulative %', yaxis='y2',
+                line=dict(color='#ef4444', width=2), marker=dict(size=6),
+            ))
+            fig_conc.add_hline(y=60, line_dash='dash', line_color='#f59e0b', yref='y2',
+                               annotation_text='60% concentration warning', annotation_position='right')
+            fig_conc.update_layout(
+                height=300, margin=dict(t=20,b=20,l=10,r=60),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(title='Campaign Rank (top 20 by conversions)', showgrid=False),
+                yaxis=dict(title='Share of conversions (%)', showgrid=True, gridcolor='#f1f5f9'),
+                yaxis2=dict(title='Cumulative %', overlaying='y', side='right', showgrid=False, range=[0,105]),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            )
+            st.plotly_chart(fig_conc, use_container_width=True)
+
+    st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 4: ARE WE BURNING THE CHANNEL?
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-header">4 · Are We Burning the Channel? (Frequency Fatigue)</div>', unsafe_allow_html=True)
+    st.caption('On days when we send more PNs, does CTR drop? If yes — users are tuning out. Frequency fatigue is a channel health crisis.')
+
+    if 'same_day_pn_count' in m.columns and 'All_Platform_CTR' in m.columns:
+        m['same_day_pn_count'] = pd.to_numeric(m['same_day_pn_count'], errors='coerce').fillna(0)
+        m['_freq_bucket'] = m['same_day_pn_count'].apply(lambda x:
+            '1 PN/day' if x<=1 else ('2 PNs/day' if x==2 else ('3 PNs/day' if x==3 else '4+ PNs/day')))
+
+        fatigue = m.groupby('_freq_bucket').agg(
+            avg_ctr=('All_Platform_CTR','mean'),
+            campaigns=(camp_col_ci,'nunique') if camp_col_ci in m.columns else ('All_Platform_CTR','count'),
+        ).reset_index()
+        freq_order = ['1 PN/day','2 PNs/day','3 PNs/day','4+ PNs/day']
+        fatigue['_freq_bucket'] = pd.Categorical(fatigue['_freq_bucket'], categories=[f for f in freq_order if f in fatigue['_freq_bucket'].values], ordered=True)
+        fatigue = fatigue.sort_values('_freq_bucket').dropna()
+        fatigue['avg_ctr'] = fatigue['avg_ctr'].clip(upper=100)
+
+        if not fatigue.empty and len(fatigue)>=2:
+            ctr_1 = fatigue[fatigue['_freq_bucket']=='1 PN/day']['avg_ctr'].values
+            ctr_max = fatigue[fatigue['_freq_bucket']=='4+ PNs/day']['avg_ctr'].values
+            has_fatigue = len(ctr_1)>0 and len(ctr_max)>0 and ctr_max[0] < ctr_1[0]
+
+            if has_fatigue:
+                drop_pct = ctr_1[0] - ctr_max[0]
+                st.markdown(f"""
+                <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-bottom:8px">
+                    <strong style="color:#dc2626">⚠️ Frequency Fatigue Detected:</strong>
+                    <span style="color:#7f1d1d;font-size:13px"> CTR drops <strong>{drop_pct:.2f}%</strong> on high-send days (4+ PNs) vs single-PN days.
+                    Users are tuning out as volume increases. Consider frequency caps per BU.</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.success("✅ No significant frequency fatigue detected — CTR holds up even on multi-PN days.")
+
+            ctrs_f = fatigue['avg_ctr'].tolist()
+            bar_cols_f = ['#22c55e' if c==max(ctrs_f) else ('#ef4444' if c==min(ctrs_f) else '#4F46E5') for c in ctrs_f]
+            fig_fat = go.Figure(go.Bar(
+                x=fatigue['_freq_bucket'], y=fatigue['avg_ctr'],
+                marker_color=bar_cols_f,
+                text=fatigue['avg_ctr'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside', textfont=dict(size=13),
+            ))
+            fig_fat.update_layout(
+                height=270, margin=dict(t=30,b=10,l=10,r=10),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+                yaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+            )
+            st.plotly_chart(fig_fat, use_container_width=True)
+            st.caption('Each bar = all campaigns sent on days with that PN count. Green = highest CTR frequency. Red = lowest.')
+        else:
+            st.info('Not enough frequency variation in the data to compute fatigue curve.')
+
+    st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 5: ARE IOS AND ANDROID USERS DIFFERENT?
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="section-header">5 · Platform Intelligence — Android vs iOS</div>', unsafe_allow_html=True)
+    st.caption('iOS users typically have higher purchase intent and income profile. Are they engaging differently with our PNs?')
+
+    if 'Android_Sent' in m.columns and 'Ios_Sent' in m.columns:
+        android_sent  = m['Android_Sent'].sum()
+        ios_sent      = m['Ios_Sent'].sum()
+        android_ctr   = (m['Android_CTR'] * m['Android_Sent']).sum() / android_sent if android_sent>0 else 0
+        ios_ctr       = (m['Ios_CTR'] * m['Ios_Sent']).sum() / ios_sent if ios_sent>0 else 0
+        android_impr  = m['Android_Impressions'].sum() if 'Android_Impressions' in m.columns else 0
+        ios_impr      = m['Ios_Impressions'].sum() if 'Ios_Impressions' in m.columns else 0
+        android_reach = android_impr / android_sent if android_sent>0 else 0
+        ios_reach     = ios_impr / ios_sent if ios_sent>0 else 0
+
+        total_sent_p = android_sent + ios_sent
+        android_share = android_sent/total_sent_p*100 if total_sent_p>0 else 0
+        ios_share     = ios_sent/total_sent_p*100 if total_sent_p>0 else 0
+        ctr_diff      = ios_ctr - android_ctr
+
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        platform_cards = [
+            ('Android Share', f'{android_share:.0f}%', f'{android_sent/1e6:.1f}M sent', '#4F46E5'),
+            ('iOS Share', f'{ios_share:.0f}%', f'{ios_sent/1e6:.1f}M sent', '#0891b2'),
+            ('Android CTR', f'{android_ctr:.2f}%', 'click ÷ sent', '#4F46E5' if android_ctr>=ios_ctr else '#94a3b8'),
+            ('iOS CTR', f'{ios_ctr:.2f}%', f'{"+" if ctr_diff>0 else ""}{ctr_diff:.2f}% vs Android', '#0891b2' if ios_ctr>=android_ctr else '#94a3b8'),
+        ]
+        for col_px, (title, val, sub, border) in zip([col_p1,col_p2,col_p3,col_p4], platform_cards):
+            col_px.markdown(f"""
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px;border-top:4px solid {border}">
+                <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">{title}</div>
+                <div style="font-size:26px;font-weight:800;color:#0f172a;margin:6px 0">{val}</div>
+                <div style="font-size:11px;color:#94a3b8">{sub}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+
+        # Platform CTR by BU
+        if 'bu' in m.columns:
+            plat_bu = m.groupby('bu').apply(lambda g: pd.Series({
+                'android_ctr': (g['Android_CTR']*g['Android_Sent']).sum()/g['Android_Sent'].sum() if g['Android_Sent'].sum()>0 else 0,
+                'ios_ctr': (g['Ios_CTR']*g['Ios_Sent']).sum()/g['Ios_Sent'].sum() if g['Ios_Sent'].sum()>0 else 0,
+            })).reset_index()
+            plat_bu = plat_bu[(plat_bu['android_ctr']>0) | (plat_bu['ios_ctr']>0)]
+            plat_bu[['android_ctr','ios_ctr']] = plat_bu[['android_ctr','ios_ctr']].clip(upper=100)
+
+            fig_plat = go.Figure()
+            fig_plat.add_trace(go.Bar(name='Android', x=plat_bu['bu'], y=plat_bu['android_ctr'],
+                                       marker_color='#4F46E5', text=plat_bu['android_ctr'].apply(lambda x: f'{x:.2f}%'),
+                                       textposition='outside', textfont=dict(size=10)))
+            fig_plat.add_trace(go.Bar(name='iOS', x=plat_bu['bu'], y=plat_bu['ios_ctr'],
+                                       marker_color='#0891b2', text=plat_bu['ios_ctr'].apply(lambda x: f'{x:.2f}%'),
+                                       textposition='outside', textfont=dict(size=10)))
+            fig_plat.update_layout(
+                barmode='group', height=320, margin=dict(t=20,b=20,l=10,r=10),
+                plot_bgcolor='white', paper_bgcolor='white',
+                xaxis=dict(type='category', showgrid=False, tickfont=dict(size=11)),
+                yaxis=dict(title='CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            )
+            st.plotly_chart(fig_plat, use_container_width=True)
+
+        # Platform insight
+        if ios_ctr > android_ctr:
+            st.markdown(f"""
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px">
+                <strong style="color:#1e40af">📱 iOS Premium Signal:</strong>
+                <span style="color:#1e3a8a;font-size:13px"> iOS users click at <strong>{ios_ctr:.2f}%</strong> vs Android at <strong>{android_ctr:.2f}%</strong>
+                (+{ctr_diff:.2f}%). iOS represents {ios_share:.0f}% of sends but likely disproportionately higher value.
+                Consider iOS-specific copy and offers for premium positioning.</span>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info(f'Android CTR ({android_ctr:.2f}%) matches or exceeds iOS ({ios_ctr:.2f}%) — no premium iOS signal in current data.')
+    else:
+        st.info('Platform-level CTR columns (Android_CTR, Ios_CTR) not found in the data.')
+
+    # ── Key takeaways for CEO ─────────────────────────────────────────────────
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+    ceo_items = []
+    # Reachability
+    if 'reachability_pct' in locals() and not reach_monthly.empty:
+        lr = reach_monthly.iloc[-1]['reachability_pct']
+        ceo_items.append(f"📡 **Channel reach: {lr:.1f}%** of targeted users are receiving PNs. {'Healthy.' if lr>=85 else 'Warning: frequency caps blocking delivery. Expand segments or reduce cadence.'}")
+    # Improvement
+    if 'overall_delta' in locals():
+        ceo_items.append(f"{'📈' if overall_delta>0 else '📉'} **CTR trend: {overall_delta:+.2f}% over 3 months** — channel is {'improving' if overall_delta>0 else 'declining'}. {'Keep scaling.' if overall_delta>0 else 'Root cause needed before CEO meeting.'}")
+    # Concentration
+    if 'top5_share' in locals():
+        ceo_items.append(f"{'🚨' if top5_share>60 else '⚠️' if top5_share>40 else '✅'} **Concentration: top 5 campaigns = {top5_share:.0f}% of conversions.** {'High dependency risk.' if top5_share>60 else 'Moderate. Diversify.' if top5_share>40 else 'Healthy spread.'}")
+    # Fatigue
+    if 'has_fatigue' in locals():
+        ceo_items.append(f"{'⚠️ Frequency fatigue confirmed — more PNs per day = lower CTR.' if has_fatigue else '✅ No frequency fatigue — channel absorbing volume well.'}")
+    # Platform
+    if 'ios_ctr' in locals() and 'android_ctr' in locals():
+        ceo_items.append(f"📱 **iOS CTR: {ios_ctr:.2f}% vs Android: {android_ctr:.2f}%.** {'iOS users are higher-intent — prioritise premium offers there.' if ios_ctr>android_ctr else 'Android dominates. Review iOS notification permission strategy.'}")
+
+    if ceo_items:
+        render_insight_box('Executive Summary — Channel Health for CEO', ceo_items)
+
+    render_insight_box('Actions before next review', [
+        '📡 **If reachability < 85%:** Reduce per-user weekly PN frequency cap or expand segment sizes',
+        '📉 **If CTR trend declining:** Deep-dive into bottom 20% of campaigns — identify what changed in copy/targeting',
+        '🎯 **If concentration > 60%:** Brief the team to develop 5 new high-performing campaign strategies to reduce dependency',
+        '⚠️ **If frequency fatigue confirmed:** Implement BU-level daily send caps; test "1 PN max per user per day" for 2 weeks',
+        '📱 **Platform:** If iOS CTR significantly higher — build an iOS-specific copy brief and test premium-positioned messaging',
     ], box_type='success')
