@@ -9,6 +9,9 @@ Usage:
     python run_report.py --csv --no-upload        # process only, skip BigQuery write
     python run_report.py --dry-run                # process data but do not write to BigQuery
     python run_report.py --csv --export-path path --lookup-path path
+    python run_report.py --api                    # pull from MoEngage API (automated mode)
+    python run_report.py --api --days 14          # pull last 14 days from API
+    python run_report.py --api --no-upload        # test API pull without writing to BigQuery
 """
 import argparse
 import os
@@ -39,6 +42,10 @@ def main() -> None:
                         help='Path to MoEngage export CSV (used with --csv)')
     parser.add_argument('--lookup-path', default='tests/fixtures/sample_lookup.csv',
                         help='Path to shop lookup CSV (used with --csv)')
+    parser.add_argument('--api', action='store_true',
+                        help='Pull data from MoEngage API instead of CSV file')
+    parser.add_argument('--days', type=int, default=7,
+                        help='Number of days to pull from API (default: 7, used with --api)')
     args = parser.parse_args()
 
     project_id = os.getenv('GCP_PROJECT_ID')
@@ -46,17 +53,32 @@ def main() -> None:
 
     # ── Load data ──────────────────────────────────────────────────────────
     print('Loading data...')
-    if args.csv:
+    if args.api:
+        # Automated mode: pull from MoEngage API
+        app_id      = os.getenv('MOENGAGE_APP_ID')
+        secret_key  = os.getenv('MOENGAGE_SECRET_KEY')
+        data_center = os.getenv('MOENGAGE_DATA_CENTER', 'api-01')
+        if not app_id or not secret_key:
+            raise EnvironmentError(
+                'MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY must be set in .env for --api mode.\n'
+                'Find them at: MoEngage → Settings → APIs → Data Export'
+            )
+        from src.loader import load_last_n_days_from_api, load_lookup_from_csv
+        raw_df    = load_last_n_days_from_api(app_id, secret_key, days=args.days, data_center=data_center)
+        lookup_df = load_lookup_from_csv(args.lookup_path)
+        print(f'   -> {len(raw_df)} campaigns loaded from MoEngage API (last {args.days} days)')
+    elif args.csv:
+        # Manual mode: load from local CSV
         raw_df    = load_from_csv(args.export_path)
         lookup_df = load_lookup_from_csv(args.lookup_path)
+        print(f'   -> {len(raw_df)} campaigns loaded from CSV')
     else:
         if not project_id or not key_path:
             raise EnvironmentError(
                 'GCP_PROJECT_ID and GOOGLE_CLOUD_KEY_PATH must be set in .env'
             )
         raw_df, lookup_df = load_from_sheets(project_id, key_path)
-
-    print(f'   -> {len(raw_df)} campaigns loaded')
+        print(f'   -> {len(raw_df)} campaigns loaded from Google Sheets')
 
     # ── Enrich ────────────────────────────────────────────────────────────
     print('Building master enriched table...')
