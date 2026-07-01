@@ -73,10 +73,32 @@ def test_popchop_dual_tag_gives_single_row():
     assert df.iloc[0]['bu'] == 'POPchop'
     assert df.iloc[0]['is_multi_bu'] == False
 
-# ── UPI and RCBP ─────────────────────────────────────────────────────────────
-def test_upi_from_uncategorized():
-    df = tag_bu(_row(**{COL_TAG_UNCATEGORIZED: "['UPI']"}))
-    assert df.iloc[0]['bu'] == 'UPI'
+# ── UPI split and RCBP ───────────────────────────────────────────────────────
+def test_upi_acquisition_from_first_transaction_goal():
+    df = pd.DataFrame([{
+        COL_TAG_POPCARD: '[]', COL_TAG_RUPAY: '[]',
+        COL_TAG_UNCATEGORIZED: "['UPI']", COL_TAG_SHOP: '[]',
+        'Campaign Name': 'UPI_NTU_001',
+        'Android Default Button screen name/Deeplinking URL/Richlanding URL': '',
+        'Conversion Goal 1 Attribute': "['IS_FIRST_TRANSACTION']",
+        'Conversion Goal 1 Value': "['TRUE']",
+        'Custom Segment Filters': 'Users in custom segment: UPI_D-1_NTU',
+    }])
+    result = tag_bu(df)
+    assert result.iloc[0]['bu'] == 'UPI - Acquisition'
+
+def test_upi_retention_from_no_first_transaction_filter():
+    df = pd.DataFrame([{
+        COL_TAG_POPCARD: '[]', COL_TAG_RUPAY: '[]',
+        COL_TAG_UNCATEGORIZED: "['UPI']", COL_TAG_SHOP: '[]',
+        'Campaign Name': 'UPI_3001_1',
+        'Android Default Button screen name/Deeplinking URL/Richlanding URL': '',
+        'Conversion Goal 1 Attribute': '[]',
+        'Conversion Goal 1 Value': '[]',
+        'Custom Segment Filters': 'allusers',
+    }])
+    result = tag_bu(df)
+    assert result.iloc[0]['bu'] == 'UPI - Retention'
 
 def test_rcbp_from_uncategorized():
     df = tag_bu(_row(**{COL_TAG_UNCATEGORIZED: "['RCBP']"}))
@@ -86,13 +108,15 @@ def test_rcbp_from_uncategorized():
 def test_genuine_multi_bu_duplicates_rows():
     df = tag_bu(_row(**{COL_TAG_POPCARD: "['POPcard_txn']", COL_TAG_UNCATEGORIZED: "['UPI']"}))
     assert len(df) == 2
-    assert set(df['bu'].tolist()) == {'POPcard - Activation', 'UPI'}
+    # UPI tag now resolves to UPI - Retention (no first-transaction signal in _row defaults)
+    assert set(df['bu'].tolist()) == {'POPcard - Activation', 'UPI - Retention'}
     assert all(df['is_multi_bu'])
 
 # ── Fallback: campaign name ───────────────────────────────────────────────────
 def test_untagged_upi_inferred_from_name():
+    # No first-transaction signals → UPI - Retention
     df = tag_bu(_row(**{'Campaign Name': 'UPI_9999_1'}))
-    assert df.iloc[0]['bu'] == 'UPI'
+    assert df.iloc[0]['bu'] == 'UPI - Retention'
 
 def test_untagged_rcbp_inferred_from_name():
     df = tag_bu(_row(**{'Campaign Name': 'RCBP_2001_1'}))

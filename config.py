@@ -71,7 +71,7 @@ TAG_VALUE_TO_BU = {
 }
 
 ALL_BUS = [
-    'UPI', 'RCBP', 'Shop', 'POPchop',
+    'UPI - Acquisition', 'UPI - Retention', 'RCBP', 'Shop', 'POPchop',
     'POPcard - Acquisition', 'POPcard - Activation',
     'Rupay - Activation', 'Rupay - Acquisition',
 ]
@@ -104,24 +104,36 @@ CREDIT_ACTIVATION_DEEPLINK_SIGNALS  = ['rupay', 'linking', 'ntu', 'cashback', 'p
 # Each BU tracks a different MoEngage event as its "true conversion".
 # The pipeline scans Goal 1-5 events to find the right one per campaign.
 BU_CONVERSION_GOAL_EVENTS = {
-    'Shop':                   'ORDER_STATUS_UPDATED',
-    'RCBP':                   'TRANSACTION_STATUS_PAGE_RCBP',
-    'UPI':                    'UPI_TRANSACTION_STATUS',
-    'POPcard - Acquisition':  'UPI_LINKED_CREDITCARD',
-    'POPcard - Activation':   'UPI_TRANSACTION_STATUS',
+    # Shop: PAGE_VIEWED_SHOP with PAGE_NAME=ORDER_CONFIRMATION attr = actual purchase
+    'Shop':                   'PAGE_VIEWED_SHOP',
+    # RCBP: two different event names for same thing (old vs new)
+    'RCBP':                   ['TRANSACTION_STATUS_PAGE_RCBP', 'RCBP_TRANSACTION_STATUS'],
+    # UPI split: same event, different attribute filter
+    'UPI - Acquisition':      'UPI_TRANSACTION_STATUS',    # Goal tracks IS_FIRST_TRANSACTION=TRUE
+    'UPI - Retention':        'UPI_TRANSACTION_STATUS',    # Goal tracks all transactions
+    # POPcard
+    'POPcard - Acquisition':  'MEDIA_CLICK',               # Apply Now button click (intended proxy)
+    'POPcard - Activation':   'UPI_TRANSACTION_STATUS',    # INSTRUMENT_TYPE=POPRUPAY
+    # Rupay
     'Rupay - Acquisition':    'UPI_LINKED_CREDITCARD',
-    'Rupay - Activation':     'UPI_TRANSACTION_STATUS',
-    'POPchop':                'MANDATE_SETUP_SHOP',
+    'Rupay - Activation':     'UPI_TRANSACTION_STATUS',    # INSTRUMENT_TYPE=RUPAY
+    # POPchop: multiple valid events, take first match
+    'POPchop':                ['MANDATE_SETUP_SHOP', 'ORDER_STATUS_UPDATED', 'PAGE_VIEWED_SHOP'],
 }
+
+# Signals in Goal 1 attribute/value that indicate a first-time acquisition campaign
+UPI_ACQUISITION_GOAL_SIGNALS = ['IS_FIRST_TRANSACTION', 'FIRST_TRANSACTION', 'NTU', 'D-1']
 
 # Human-readable labels for conversion events (used in dashboard tooltips)
 CONVERSION_EVENT_LABELS = {
     'ORDER_STATUS_UPDATED':            'Purchase completed',
+    'PAGE_VIEWED_SHOP':                'Order confirmed (purchase)',  # with ORDER_CONFIRMATION attr
     'TRANSACTION_STATUS_PAGE_RCBP':    'Bill payment done',
+    'RCBP_TRANSACTION_STATUS':         'Bill payment done',
     'UPI_TRANSACTION_STATUS':          'UPI/card transaction',
     'UPI_LINKED_CREDITCARD':           'Card linked/applied',
     'MANDATE_SETUP_SHOP':              'Mandate set up',
-    'PAGE_VIEWED_SHOP':                'Shop page viewed (not a purchase)',
+    'MEDIA_CLICK':                     'Apply Now click (intent proxy)',
 }
 
 # Conversion goal columns in MoEngage export

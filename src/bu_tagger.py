@@ -48,6 +48,34 @@ def _infer_bu_from_name_and_deeplink(row: pd.Series) -> str:
     return CAMPAIGN_NAME_BU_MAP.get(prefix, '')
 
 
+def _refine_upi_subtype(row: pd.Series) -> str:
+    """
+    Refine 'UPI' into 'UPI - Acquisition' or 'UPI - Retention' based on
+    the campaign's conversion goal setup.
+    - Acquisition: Goal 1 targets first-time transactions (IS_FIRST_TRANSACTION, NTU, D-1)
+    - Retention: Goal 1 targets all transactions (no first-time filter)
+    """
+    from config import UPI_ACQUISITION_GOAL_SIGNALS
+
+    # Check Goal 1 attribute and value for first-transaction signals
+    for col in [
+        'Conversion Goal 1 Attribute',
+        'Conversion Goal 1 Value',
+        'Conversion Goal 1 Name',
+        'Campaign Name',
+    ]:
+        val = str(row.get(col, '') or '').upper()
+        if any(signal in val for signal in UPI_ACQUISITION_GOAL_SIGNALS):
+            return 'UPI - Acquisition'
+
+    # Also check segment filters for NTU/D-1 signals
+    seg = str(row.get('Custom Segment Filters', '') or '').upper()
+    if any(signal in seg for signal in UPI_ACQUISITION_GOAL_SIGNALS):
+        return 'UPI - Acquisition'
+
+    return 'UPI - Retention'
+
+
 def _detect_bus(row: pd.Series) -> list:
     """Return all BU labels detected for a single row (deduplicated)."""
     found_set = set()
@@ -61,6 +89,9 @@ def _detect_bus(row: pd.Series) -> list:
         for tag in tags:
             bu = TAG_VALUE_TO_BU.get(tag)
             if bu and bu not in found_set:
+                # Refine 'UPI' into Acquisition or Retention
+                if bu == 'UPI':
+                    bu = _refine_upi_subtype(row)
                 found_set.add(bu)
                 found_order.append(bu)
 
@@ -68,6 +99,9 @@ def _detect_bus(row: pd.Series) -> list:
     if not found_order:
         inferred = _infer_bu_from_name_and_deeplink(row)
         if inferred:
+            # Refine UPI fallback too
+            if inferred == 'UPI':
+                inferred = _refine_upi_subtype(row)
             found_order.append(inferred)
 
     return found_order if found_order else ['Unknown']

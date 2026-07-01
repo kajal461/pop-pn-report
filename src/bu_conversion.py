@@ -20,11 +20,17 @@ def _find_bu_conversion(row: pd.Series) -> tuple:
     """
     For a single campaign row, find the goal whose event matches the BU's
     expected conversion event. Returns (count, event_name, was_tracked).
+    Supports list values in BU_CONVERSION_GOAL_EVENTS for BUs with multiple valid events.
     """
     bu = str(row.get('bu', '') or '')
-    expected_event = BU_CONVERSION_GOAL_EVENTS.get(bu, '')
+    expected = BU_CONVERSION_GOAL_EVENTS.get(bu, '')
 
-    if not expected_event:
+    # Support list of acceptable events for a BU
+    if isinstance(expected, list):
+        expected_events = [e.lower() for e in expected]
+    elif expected:
+        expected_events = [expected.lower()]
+    else:
         # Unknown BU — fall back to first non-zero goal
         for count_col in GOAL_COUNT_COLS:
             val = pd.to_numeric(row.get(count_col, 0), errors='coerce') or 0
@@ -32,15 +38,15 @@ def _find_bu_conversion(row: pd.Series) -> tuple:
                 return float(val), 'Unknown BU', False
         return 0.0, 'Unknown BU', False
 
-    # Scan Goal 1-5: find the one matching this BU's expected event
+    # Scan Goal 1-5: find the one matching this BU's expected event(s)
     for event_col, count_col in zip(GOAL_EVENT_COLS, GOAL_COUNT_COLS):
-        event = str(row.get(event_col, '') or '').strip()
-        if expected_event.lower() in event.lower():
+        event = str(row.get(event_col, '') or '').strip().lower()
+        if any(exp in event for exp in expected_events):
             count = pd.to_numeric(row.get(count_col, 0), errors='coerce') or 0
             return float(count), event, True
 
     # Expected event not found in any goal → not tracked
-    return 0.0, f'Not tracked (expected: {expected_event})', False
+    return 0.0, f'Not tracked (expected: {expected})', False
 
 
 def add_bu_aware_conversions(df: pd.DataFrame) -> pd.DataFrame:
