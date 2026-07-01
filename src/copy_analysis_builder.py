@@ -16,7 +16,7 @@ COPY_DIMENSIONS = [
 
 def build_copy_analysis(master: pd.DataFrame) -> pd.DataFrame:
     """Build aggregated copy analysis pivot: each copy dimension vs avg CTR/conversions."""
-    master = master.copy()
+    master = _normalize_cols(master.copy())
     master[COL_ALL_CTR]  = pd.to_numeric(master[COL_ALL_CTR], errors='coerce').fillna(0)
     master[COL_ALL_SENT] = pd.to_numeric(master[COL_ALL_SENT], errors='coerce').fillna(0)
     if 'primary_conversions' not in master.columns:
@@ -45,3 +45,14 @@ def build_copy_analysis(master: pd.DataFrame) -> pd.DataFrame:
                             'total_sent', 'avg_ctr', 'avg_conversions']])
 
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize BigQuery underscore column names back to space-separated format."""
+    known = set(COPY_DIMENSIONS + [COL_ALL_CTR, COL_ALL_SENT, 'primary_conversions', 'Campaign ID', 'sent_month', 'bu'])
+    rename = {}
+    for col in df.columns:
+        space_ver = col.replace('_', ' ')
+        if col not in known and space_ver in known and col != space_ver:
+            rename[col] = space_ver
+    return df.rename(columns=rename) if rename else df
