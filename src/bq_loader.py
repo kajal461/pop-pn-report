@@ -44,9 +44,13 @@ def _client() -> bigquery.Client:
 
 @st.cache_data(ttl=3600)
 def load_table(table: str) -> pd.DataFrame:
-    """Load a BigQuery table into a DataFrame. Cached for 1 hour."""
+    """Load a BigQuery table into a DataFrame. Cached for 1 hour.
+    Uses REST API only (create_bfq_client=False) — avoids bigquery.readsessions.create permission.
+    """
     client = _client()
-    return client.query(f'SELECT * FROM `{PROJECT_ID}.{DATASET}.{table}`').to_dataframe()
+    job = client.query(f'SELECT * FROM `{PROJECT_ID}.{DATASET}.{table}`')
+    # Explicitly disable BigQuery Storage API — service account only has Data Editor + Job User
+    return job.result().to_dataframe(create_bfq_client=False)
 
 
 def clear_all_caches() -> None:
