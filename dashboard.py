@@ -514,6 +514,13 @@ st.sidebar.caption('Data refreshes automatically after each weekly run of run_re
 # ══════════════════════════════════════════════════════════════════════════════
 filtered_master = master.copy()
 
+# Always exclude NaT/null sent_month rows — these are data artefacts from merged exports
+if 'sent_month' in filtered_master.columns:
+    filtered_master = filtered_master[
+        filtered_master['sent_month'].notna() &
+        (~filtered_master['sent_month'].astype(str).isin(['NaT', 'nan', 'None', '']))
+    ]
+
 if selected_bus and 'bu' in filtered_master.columns:
     filtered_master = filtered_master[filtered_master['bu'].isin(selected_bus)]
 

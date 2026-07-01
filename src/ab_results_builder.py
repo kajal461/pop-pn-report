@@ -41,17 +41,30 @@ def build_ab_results(master: pd.DataFrame) -> pd.DataFrame:
     var_col = next((c for c in [COL_VARIATION, 'Campaign Version Name', 'Campaign_Version_Name']
                     if c in ab_df.columns), None)
 
+    # Find title/body columns — try all known name variants (original, sanitized by BigQuery)
+    title_col = next((c for c in [
+        COL_ANDROID_TITLE,
+        'Android_Message_Title_Android_Web_Title_iOS',
+        'Android Message Title Android Web Title iOS',
+    ] if c in ab_df.columns), None)
+    body_col = next((c for c in [
+        COL_ANDROID_BODY,
+        'Android_Message_Android_Web_Subtitle_iOS',
+        'Android Message Android Web Subtitle iOS',
+    ] if c in ab_df.columns), None)
+
     keep = [
         COL_CAMPAIGN_ID, COL_CAMPAIGN_NAME,
         'bu', 'sent_month',
-        COL_ANDROID_TITLE, COL_ANDROID_BODY,
         COL_ALL_CTR, COL_ALL_SENT, 'primary_conversions',
         'tonality', 'brand_compliant',
         'ab_winner', 'ab_lift_ctr',
         'emoji_count_bucket', 'has_specific_number', 'title_length_bucket',
     ]
-    if var_col:
-        keep.insert(2, var_col)
+    # Add title/body with whatever name they have in this DataFrame
+    if title_col: keep.insert(4, title_col)
+    if body_col:  keep.insert(5, body_col)
+    if var_col:   keep.insert(2, var_col)
 
     available = [c for c in keep if c in ab_df.columns]
     sort_cols = [c for c in [COL_CAMPAIGN_ID, var_col] if c and c in ab_df.columns]
