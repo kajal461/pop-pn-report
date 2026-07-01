@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.bq_loader import load_all, clear_all_caches
+from src.bq_loader import load_all, load_table
 from config import MIN_SENT_THRESHOLD
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -244,12 +244,22 @@ def insights_brand(brand_df):
     if not era_month.empty:
         pre_rows = era_month[era_month['brand_guidelines_era'] == 'Pre-June']
         post_rows = era_month[era_month['brand_guidelines_era'] == 'Post-June']
-        pre_ctr = pre_rows['avg_ctr'].mean() if not pre_rows.empty else None
-        post_ctr = post_rows['avg_ctr'].mean() if not post_rows.empty else None
-        if pd.notna(pre_ctr) and pd.notna(post_ctr):
+        # Use campaign-weighted average (not simple average of monthly means)
+        def _weighted_ctr(rows):
+            if rows.empty or 'avg_ctr' not in rows.columns: return None
+            rows = rows.copy()
+            rows['avg_ctr'] = pd.to_numeric(rows['avg_ctr'], errors='coerce')
+            if 'campaign_count' in rows.columns:
+                rows['campaign_count'] = pd.to_numeric(rows['campaign_count'], errors='coerce').fillna(1)
+                denom = rows['campaign_count'].sum()
+                return (rows['avg_ctr'] * rows['campaign_count']).sum() / denom if denom > 0 else rows['avg_ctr'].mean()
+            return rows['avg_ctr'].mean()
+        pre_ctr  = _weighted_ctr(pre_rows)
+        post_ctr = _weighted_ctr(post_rows)
+        if pre_ctr and post_ctr and pd.notna(pre_ctr) and pd.notna(post_ctr):
             delta = post_ctr - pre_ctr
             direction = "improved" if delta > 0 else "dropped"
-            insights.append(f"📈 Since the brand book launched in June, CTR has **{direction} by {abs(delta):.2f}%**.")
+            insights.append(f"📈 Since the brand book launched in June, CTR has **{direction} by {abs(delta):.2f}%** (campaign-weighted).")
         if not post_rows.empty and 'compliance_rate' in post_rows.columns:
             compliance = post_rows['compliance_rate'].mean()
             if pd.notna(compliance):
@@ -377,7 +387,7 @@ period_filtered = bool(selected_months and set(selected_months) != set(all_month
 
 st.sidebar.markdown('---')
 if st.sidebar.button('🔄 Refresh Data'):
-    clear_all_caches()   # clears bq_loader.load_table cache explicitly
+    load_table.clear()     # clears bq_loader.load_table cache explicitly
     st.cache_data.clear()  # clears any other st.cache_data caches
     st.rerun()
 
@@ -1439,9 +1449,15 @@ elif page == '📖 Brand Guidelines Impact':
     st.caption('Does brand-compliant copy (DO labels) outperform non-compliant copy (DON\'T labels)?')
 
     if not compliance_df.empty and 'brand_compliant' in compliance_df.columns:
-        compliance_df['label'] = compliance_df['brand_compliant'].apply(
-            lambda x: '✅ Brand Compliant (DO)' if str(x).lower() in ('true', '1', 'yes') else "❌ Non-Compliant (DON'T)"
-        )
+        def _compliant_label(x):
+            # Handle float (1.0/0.0 from BigQuery), bool (True/False), and string ('True'/'False')
+            try:
+                if float(x) == 1.0: return '✅ Brand Compliant (DO)'
+            except (TypeError, ValueError):
+                pass
+            return '✅ Brand Compliant (DO)' if str(x).lower() in ('true', '1', 'yes') else "❌ Non-Compliant (DON'T)"
+        compliance_df['label'] = compliance_df['brand_compliant'].apply(_compliant_label)
+        compliance_df['avg_ctr'] = pd.to_numeric(compliance_df['avg_ctr'], errors='coerce').fillna(0)
         fig_comp = go.Figure()
         for era, colour in [('Pre-June', '#cbd5e1'), ('Post-June', '#4F46E5')]:
             sub = compliance_df[compliance_df['brand_guidelines_era'] == era]
