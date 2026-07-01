@@ -63,7 +63,7 @@ def main() -> None:
                 'MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY must be set in .env for --api mode.\n'
                 'Find them at: MoEngage → Settings → APIs → Data Export'
             )
-        from src.loader import load_last_n_days_from_api, load_lookup_from_csv
+        from src.loader import load_last_n_days_from_api
         raw_df    = load_last_n_days_from_api(app_id, secret_key, days=args.days, data_center=data_center)
         lookup_df = load_lookup_from_csv(args.lookup_path)
         print(f'   -> {len(raw_df)} campaigns loaded from MoEngage API (last {args.days} days)')
