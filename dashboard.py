@@ -1787,8 +1787,35 @@ elif page == '🏆 Top & Bottom Campaigns':
         (fm['All_Platform_CTR'] > 0)
     ].copy()
 
+    # Aggregate to campaign level (weighted avg CTR) to avoid A/B variation inflation.
+    # Raw variation-level data can show e.g. 8.33% for Variation B while Variation A had 4%.
+    # Campaign-level weighted CTR = (sum of CTR×Sent) / total_sent = true campaign CTR.
+    camp_col_p5 = 'Campaign_ID' if 'Campaign_ID' in eligible.columns else 'Campaign ID'
+    title_col_p5 = 'Android_Message_Title_Android_Web_Title_iOS'
+    body_col_p5  = 'Android_Message_Android_Web_Subtitle_iOS'
+
+    # Columns to carry through (take first value per campaign)
+    carry_cols = [c for c in [title_col_p5, body_col_p5, 'bu', 'sent_month',
+                               'tonality', 'brand_compliant', 'has_specific_number',
+                               'has_emoji', 'has_action_verb', 'All_Platform_Clicks',
+                               'All_Platform_Impressions', 'primary_conversions'] if c in eligible.columns]
+
+    def _agg_campaign(g):
+        total_sent = g['All_Platform_Sent'].sum()
+        weighted_ctr = (g['All_Platform_CTR'] * g['All_Platform_Sent']).sum() / total_sent if total_sent > 0 else 0
+        row = {camp_col_p5: g[camp_col_p5].iloc[0], 'All_Platform_Sent': total_sent,
+               'All_Platform_CTR': round(weighted_ctr, 4), 'n_variations': len(g)}
+        for col in carry_cols:
+            row[col] = g[col].iloc[0]
+        return pd.Series(row)
+
+    group_keys = [camp_col_p5, 'sent_month'] if 'sent_month' in eligible.columns else [camp_col_p5]
+    eligible_camp = eligible.groupby(group_keys, as_index=False).apply(_agg_campaign).reset_index(drop=True)
+    eligible_camp['All_Platform_CTR']  = pd.to_numeric(eligible_camp['All_Platform_CTR'], errors='coerce').fillna(0)
+    eligible_camp['All_Platform_Sent'] = pd.to_numeric(eligible_camp['All_Platform_Sent'], errors='coerce').fillna(0)
+
     tb_frames = []
-    for month, group in (eligible.groupby('sent_month') if 'sent_month' in eligible.columns else []):
+    for month, group in (eligible_camp.groupby('sent_month') if 'sent_month' in eligible_camp.columns else []):
         ranked = group.sort_values('All_Platform_CTR', ascending=False).reset_index(drop=True)
         top = ranked.head(5).copy(); top['rank'] = range(1, len(top)+1); top['rank_type'] = 'Top'
         bottom = ranked.tail(5).copy(); bottom['rank'] = range(1, len(bottom)+1); bottom['rank_type'] = 'Bottom'
@@ -1809,7 +1836,8 @@ elif page == '🏆 Top & Bottom Campaigns':
         <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
     </div>
     <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
-        Ranked by CTR · min {MIN_SENT_THRESHOLD:,} sends · max 100% CTR · use these as copy templates and warning signs
+        Ranked by campaign-weighted CTR (A/B variations combined) · min {MIN_SENT_THRESHOLD:,} sends · max 100% CTR
+        · Note: targeted campaigns (1K-2K sends) naturally show higher CTR than broad campaigns (50K+ sends) — CTR reflects targeting quality, not just copy quality
     </p>
     """, unsafe_allow_html=True)
 
