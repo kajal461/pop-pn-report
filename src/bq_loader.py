@@ -15,6 +15,23 @@ DATASET    = os.getenv('BQ_DATASET', 'pn_report')
 
 
 def _client() -> bigquery.Client:
+    """
+    Create BigQuery client.
+    - Local: reads from KEY_PATH (credentials/service_account.json)
+    - Streamlit Cloud: reads from st.secrets['gcp_service_account'] dict
+    """
+    # Try Streamlit Cloud secrets first (deployed environment)
+    try:
+        if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+            import json
+            creds = service_account.Credentials.from_service_account_info(
+                dict(st.secrets['gcp_service_account']),
+                scopes=['https://www.googleapis.com/auth/cloud-platform'],
+            )
+            return bigquery.Client(project=PROJECT_ID, credentials=creds)
+    except Exception:
+        pass
+    # Fallback: local file-based credentials
     creds = service_account.Credentials.from_service_account_file(
         KEY_PATH, scopes=['https://www.googleapis.com/auth/cloud-platform']
     )
