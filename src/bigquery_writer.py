@@ -201,8 +201,12 @@ def upsert_master_enriched(
 
     # Write full combined dataset back to BigQuery
     _write_table(client, project_id, 'master_enriched', combined)
-    months_str = str(combined['sent_month'].nunique()) if 'sent_month' in combined.columns else '?'
-    print(f'  master_enriched now has {len(combined):,} historical rows ({months_str} months)')
+    if 'sent_month' in combined.columns:
+        sorted_months = sorted(combined['sent_month'].dropna().unique().tolist())
+        range_str = f'{sorted_months[0]} → {sorted_months[-1]}' if sorted_months else '?'
+    else:
+        range_str = '?'
+    print(f'  master_enriched now has {len(combined):,} historical rows ({range_str})')
 
     return combined
 

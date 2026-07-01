@@ -150,8 +150,12 @@ def main() -> None:
     print()
     print('Done. master_enriched now contains full historical data.')
     print(f'    Total campaigns in BigQuery: {len(full_master):,}')
-    months = full_master['sent_month'].nunique() if 'sent_month' in full_master.columns else '?'
-    print(f'    Months of data: {months}')
+    if 'sent_month' in full_master.columns:
+        months_sorted = sorted(full_master['sent_month'].dropna().unique().tolist())
+        date_from = months_sorted[0] if months_sorted else '?'
+        date_to   = months_sorted[-1] if months_sorted else '?'
+        # Note: first and last months are likely partial (e.g. last few days of March)
+        print(f'    Date range in BigQuery: {date_from} → {date_to}  ({len(months_sorted)} calendar months, first/last may be partial)')
 
 
 if __name__ == '__main__':
