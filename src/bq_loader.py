@@ -23,9 +23,13 @@ def _client() -> bigquery.Client:
     # Try Streamlit Cloud secrets first (deployed environment)
     try:
         if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-            import json
+            # Convert AttrDict to plain dict
+            key_dict = {k: v for k, v in st.secrets['gcp_service_account'].items()}
+            # Fix private key: Streamlit secrets stores \n as literal \\n
+            if 'private_key' in key_dict:
+                key_dict['private_key'] = key_dict['private_key'].replace('\\n', '\n')
             creds = service_account.Credentials.from_service_account_info(
-                dict(st.secrets['gcp_service_account']),
+                key_dict,
                 scopes=['https://www.googleapis.com/auth/cloud-platform'],
             )
             return bigquery.Client(project=PROJECT_ID, credentials=creds)
