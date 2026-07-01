@@ -1445,39 +1445,99 @@ elif page == '📖 Brand Guidelines Impact':
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
     # ── DO vs DON'T CTR ──────────────────────────────────────────────────────
-    st.markdown('<div class="section-header">DO vs DON\'T Tone — CTR Comparison</div>', unsafe_allow_html=True)
-    st.caption('Does brand-compliant copy (DO labels) outperform non-compliant copy (DON\'T labels)?')
+    st.markdown('<div class="section-header">DO vs DON\'T Tone — Does the Brand Book Help?</div>', unsafe_allow_html=True)
 
     if not compliance_df.empty and 'brand_compliant' in compliance_df.columns:
-        def _compliant_label(x):
-            # Handle float (1.0/0.0 from BigQuery), bool (True/False), and string ('True'/'False')
-            try:
-                if float(x) == 1.0: return '✅ Brand Compliant (DO)'
-            except (TypeError, ValueError):
-                pass
-            return '✅ Brand Compliant (DO)' if str(x).lower() in ('true', '1', 'yes') else "❌ Non-Compliant (DON'T)"
-        compliance_df['label'] = compliance_df['brand_compliant'].apply(_compliant_label)
+        def _is_compliant(x):
+            try: return float(x) == 1.0
+            except: return str(x).lower() in ('true', '1', 'yes')
+
         compliance_df['avg_ctr'] = pd.to_numeric(compliance_df['avg_ctr'], errors='coerce').fillna(0)
-        fig_comp = go.Figure()
-        for era, colour in [('Pre-June', '#cbd5e1'), ('Post-June', '#4F46E5')]:
-            sub = compliance_df[compliance_df['brand_guidelines_era'] == era]
-            if sub.empty: continue
-            fig_comp.add_trace(go.Bar(
-                name=era, x=sub['label'], y=sub['avg_ctr'],
-                marker_color=colour,
-                text=sub['avg_ctr'].apply(lambda x: f'{x:.2f}%'),
-                textposition='outside',
-                textfont=dict(size=12),
-            ))
-        fig_comp.update_layout(
-            height=320, barmode='group',
-            margin=dict(t=20, b=10, l=10, r=10),
-            plot_bgcolor='white', paper_bgcolor='white',
-            xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
-            yaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9'),
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-        )
-        st.plotly_chart(fig_comp, use_container_width=True)
+        compliance_df['campaign_count'] = pd.to_numeric(compliance_df['campaign_count'], errors='coerce').fillna(0)
+        compliance_df['is_do'] = compliance_df['brand_compliant'].apply(_is_compliant)
+
+        # Focus on Post-June only for the main chart — Pre-June non-compliant is only 6 campaigns (noise)
+        post_comp = compliance_df[compliance_df['brand_guidelines_era'] == 'Post-June'].copy()
+
+        if not post_comp.empty:
+            do_row   = post_comp[post_comp['is_do'] == True]
+            dont_row = post_comp[post_comp['is_do'] == False]
+
+            do_ctr    = do_row['avg_ctr'].values[0]   if not do_row.empty   else 0
+            dont_ctr  = dont_row['avg_ctr'].values[0] if not dont_row.empty else 0
+            do_camps  = int(do_row['campaign_count'].values[0])   if not do_row.empty   else 0
+            dont_camps= int(dont_row['campaign_count'].values[0]) if not dont_row.empty else 0
+
+            # Key insight callout
+            diff = do_ctr - dont_ctr
+            if diff > 0:
+                st.markdown(f"""
+                <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 16px;margin:8px 0">
+                    <strong style="color:#15803d">✅ Brand compliant copy outperforms non-compliant copy in June</strong><br>
+                    <span style="font-size:13px;color:#166534">DO-tone campaigns: <strong>{do_ctr:.2f}% CTR</strong> vs DON'T-tone: <strong>{dont_ctr:.2f}% CTR</strong> — a <strong>+{diff:.2f}% advantage</strong> for brand-compliant copy.</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:12px 16px;margin:8px 0">
+                    <strong style="color:#854d0e">⚠️ Non-compliant copy shows higher CTR in June</strong><br>
+                    <span style="font-size:13px;color:#713f12">Note: only {dont_camps} non-compliant campaigns — small sample, results may not be statistically reliable.</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Post-June comparison bar chart (main insight)
+            col_c1, col_c2 = st.columns([2, 1])
+            with col_c1:
+                fig_comp = go.Figure()
+                bars = [
+                    ('✅ Brand Compliant\n(DO tone)', do_ctr,   do_camps,   '#22c55e'),
+                    ("❌ Non-Compliant\n(DON'T tone)", dont_ctr, dont_camps, '#ef4444'),
+                ]
+                fig_comp.add_trace(go.Bar(
+                    x=[b[0] for b in bars],
+                    y=[b[1] for b in bars],
+                    marker_color=[b[3] for b in bars],
+                    text=[f'{b[1]:.2f}%' for b in bars],
+                    textposition='outside',
+                    textfont=dict(size=14, family='sans-serif'),
+                    hovertemplate='%{x}<br>CTR: %{y:.2f}%<extra></extra>',
+                ))
+                fig_comp.update_layout(
+                    height=300,
+                    margin=dict(t=40, b=10, l=10, r=10),
+                    plot_bgcolor='white', paper_bgcolor='white',
+                    title=dict(text='Post-June CTR: Compliant vs Non-Compliant', font=dict(size=13)),
+                    xaxis=dict(type='category', showgrid=False, tickfont=dict(size=12)),
+                    yaxis=dict(title='Avg CTR (%)', showgrid=True, gridcolor='#f1f5f9',
+                               range=[0, max(do_ctr, dont_ctr) * 1.35]),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_comp, use_container_width=True)
+
+            with col_c2:
+                st.markdown(f"""
+                <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-top:8px">
+                    <div style="font-size:11px;color:#64748b;font-weight:700;margin-bottom:12px;text-transform:uppercase">Post-June Sample Sizes</div>
+                    <div style="margin-bottom:10px">
+                        <div style="color:#15803d;font-weight:700">✅ Compliant (DO)</div>
+                        <div style="font-size:22px;font-weight:800">{do_camps:,}</div>
+                        <div style="font-size:11px;color:#94a3b8">campaigns</div>
+                    </div>
+                    <div>
+                        <div style="color:#dc2626;font-weight:700">❌ Non-Compliant</div>
+                        <div style="font-size:22px;font-weight:800">{dont_camps:,}</div>
+                        <div style="font-size:11px;color:#94a3b8">campaigns</div>
+                        <div style="font-size:11px;color:#f59e0b;margin-top:4px">⚠️ Small sample</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # Pre-June context (small note, not a full chart)
+        pre_comp = compliance_df[compliance_df['brand_guidelines_era'] == 'Pre-June']
+        if not pre_comp.empty:
+            pre_dont = pre_comp[pre_comp['is_do'] == False]
+            pre_dont_n = int(pre_dont['campaign_count'].values[0]) if not pre_dont.empty else 0
+            st.caption(f'ℹ️ Pre-June note: Only {pre_dont_n} non-compliant campaigns existed before June — too small to draw conclusions from.')
 
     # ── Compliance rate by BU ─────────────────────────────────────────────────
     st.markdown('<div class="section-header" style="margin-top:8px">Brand Compliance Rate — by BU (Post-June)</div>', unsafe_allow_html=True)
