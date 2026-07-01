@@ -2320,18 +2320,59 @@ elif page == '⏰ Timing & Frequency':
 
     # ── Heatmap ───────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header">CTR Heatmap — Hour × Day of Week</div>', unsafe_allow_html=True)
-    st.caption('Green = high CTR, Red = low CTR. Best send windows are the darkest green cells.')
     if 'sent_hour' in m.columns and 'sent_day_of_week' in m.columns:
-        heat = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].mean().reset_index()
-        heat['sent_hour'] = pd.to_numeric(heat['sent_hour'], errors='coerce')
-        heat_pivot = heat.pivot(index='sent_day_of_week', columns='sent_hour', values='All_Platform_CTR')
+        # Build CTR pivot AND campaign count pivot
+        heat_ctr   = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].mean().reset_index()
+        heat_count = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].count().reset_index()
+        heat_ctr['sent_hour']   = pd.to_numeric(heat_ctr['sent_hour'],   errors='coerce')
+        heat_count['sent_hour'] = pd.to_numeric(heat_count['sent_hour'], errors='coerce')
+
+        heat_pivot = heat_ctr.pivot(index='sent_day_of_week',   columns='sent_hour', values='All_Platform_CTR')
+        count_pivot= heat_count.pivot(index='sent_day_of_week', columns='sent_hour', values='All_Platform_CTR')
+
         day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
-        heat_pivot = heat_pivot.reindex([d for d in day_order if d in heat_pivot.index])
-        fig_heat = px.imshow(heat_pivot, color_continuous_scale='RdYlGn',
-                            labels=dict(x='Hour of Day', y='', color='Avg CTR (%)'), aspect='auto')
-        fig_heat.update_layout(height=350, margin=dict(t=10,b=20,l=10,r=10),
-                               plot_bgcolor='white', paper_bgcolor='white')
+        heat_pivot  = heat_pivot.reindex([d for d in day_order if d in heat_pivot.index])
+        count_pivot = count_pivot.reindex([d for d in day_order if d in count_pivot.index])
+
+        # Cap color scale at 90th percentile of actual values — prevents 1-2 outliers
+        # from turning the scale to 40% and making all normal values look identically red
+        all_vals = heat_pivot.values.flatten()
+        all_vals = [v for v in all_vals if not pd.isna(v) and v > 0]
+        p90 = float(pd.Series(all_vals).quantile(0.90)) if all_vals else 5.0
+        color_max = round(p90 * 1.1, 1)  # small headroom above p90
+
+        # Build custom hover text including campaign count
+        hover_text = heat_pivot.copy().astype(str)
+        for day in heat_pivot.index:
+            for hour in heat_pivot.columns:
+                ctr_v   = heat_pivot.loc[day, hour]
+                count_v = count_pivot.loc[day, hour] if day in count_pivot.index and hour in count_pivot.columns else 0
+                if pd.isna(ctr_v):
+                    hover_text.loc[day, hour] = 'No campaigns'
+                else:
+                    hover_text.loc[day, hour] = f'{ctr_v:.2f}% CTR<br>{int(count_v or 0)} campaigns'
+
+        fig_heat = px.imshow(
+            heat_pivot,
+            color_continuous_scale='RdYlGn',
+            zmin=0, zmax=color_max,
+            labels=dict(x='Hour of Day', y='', color='Avg CTR (%)'),
+            aspect='auto',
+        )
+        fig_heat.update_traces(customdata=hover_text.values, hovertemplate='%{y} %{x}:00<br>%{customdata}<extra></extra>')
+        fig_heat.update_layout(
+            height=360, margin=dict(t=10,b=30,l=10,r=10),
+            plot_bgcolor='white', paper_bgcolor='white',
+            coloraxis_colorbar=dict(title='Avg CTR (%)', tickformat='.1f'),
+        )
         st.plotly_chart(fig_heat, use_container_width=True)
+        st.caption(
+            f'ℹ️ Color scale capped at {color_max:.1f}% (90th percentile of your data) '
+            f'so subtle differences between 1–5% CTR cells are visible. '
+            f'Hover over any cell to see exact CTR and campaign count. '
+            f'White cells = no campaigns sent at that hour. '
+            f'Green outlier cells with very few campaigns may not be reliable patterns.'
+        )
     else:
         st.info('Hour and day data not available. Run the pipeline to populate timing columns.')
 
