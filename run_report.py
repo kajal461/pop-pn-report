@@ -150,6 +150,13 @@ def main() -> None:
         dod_df['bu'] = dod_df.apply(_detect_bu, axis=1)
         _bu_counts = dod_df['bu'].value_counts().to_dict()
         print(f'   -> BU distribution: {_bu_counts}')
+        # Debug: show tags of first 5 "Other" campaigns so we can add missing BU tags
+        _other = dod_df[dod_df['bu'] == 'Other'].head(5)
+        for _, _r in _other.iterrows():
+            _cid = _r.get('Campaign ID', '')
+            _tags = _tags_map.get(_cid, [])
+            _name = _r.get('Campaign Name', '')
+            print(f'  Other: "{_name}" | tags={_tags}')
 
         print(f'\nWriting {len(dod_df):,} campaigns to dod_daily (sent_date={sent_date})...')
         upsert_dod_daily(project_id=project_id, key_path=key_path,
