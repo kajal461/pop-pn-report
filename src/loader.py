@@ -59,101 +59,135 @@ def load_from_sheets(
     return raw_df, lookup_df
 
 
+def _normalize_stats_response(campaigns_raw: list) -> pd.DataFrame:
+    """
+    Map MoEngage Campaign Stats API response fields to MoEngage CSV column names
+    so the existing build_master() pipeline can process them unchanged.
+
+    Stats API response shape per campaign:
+      { campaign_id, campaign_name, performance_stats: {sent, click, impression,
+        ctr, delivery_rate, ...}, conversion_goal_stats: {GoalName: {conversions}} }
+
+    Ref: https://moengage.com/docs/api/stats/get-campaign-stats.md
+    """
+    rows = []
+    for c in campaigns_raw:
+        ps   = c.get('performance_stats', {})
+        cgs  = c.get('conversion_goal_stats', {})
+
+        # Sum conversions across all goals
+        total_conv = sum(
+            g.get('conversions', 0) for g in cgs.values() if isinstance(g, dict)
+        )
+
+        row = {
+            'Campaign ID':             c.get('campaign_id', ''),
+            'Campaign Name':           c.get('campaign_name', ''),
+            'Campaign Type':           c.get('campaign_type', 'Push Notification'),
+            'Campaign Sent Time':      c.get('sent_time', ''),
+            # Platform metrics → match MoEngage CSV column names exactly
+            'All Platform Sent':       ps.get('sent', 0),
+            'All Platform Impressions':ps.get('impression', 0),
+            'All Platform Clicks':     ps.get('click', 0),
+            'All Platform CTR':        ps.get('ctr', 0),           # already in %
+            'All Platform Failed':     ps.get('failed', 0),
+            'All Platform FCM Delivery Rate': ps.get('delivery_rate', 0),
+            'All Platform Sent Rate':  ps.get('sent_rate', 0),
+            # Conversions
+            'Goal 1 Click Through Converted Users All Platform': total_conv,
+        }
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 def load_from_moengage_api(
     app_id: str,
     secret_key: str,
     date_from: str,
     date_to: str,
-    data_center: str = 'api-01',
+    data_center: str = 'api-03',
 ) -> pd.DataFrame:
     """
-    Load campaign performance data from MoEngage's Campaign Reports API.
+    Load campaign performance data from MoEngage Campaign Stats API.
 
-    This replaces the manual CSV export step. Run daily to pull the last
-    24 hours of data and merge with historical BigQuery records.
+    Endpoint: POST https://api-{dc}.moengage.com/core-services/v1/campaign-stats
+    Auth:     Basic base64(workspace_id:api_key) + MOE-APPKEY header
+    Ref:      https://moengage.com/docs/api/stats/get-campaign-stats.md
 
     Args:
-        app_id:      MoEngage App ID (from Settings → APIs → App ID)
-        secret_key:  MoEngage Secret Key (from Settings → APIs → Secret Key)
-        date_from:   Start date as 'YYYY-MM-DD'
-        date_to:     End date as 'YYYY-MM-DD'
-        data_center: MoEngage data center prefix (default 'api-01' for India)
-                     Check your MoEngage URL: app.moengage.com → Settings → APIs
+        app_id:      MoEngage Workspace ID / App ID
+        secret_key:  MoEngage API Key / Secret Key
+        date_from:   Start date 'YYYY-MM-DD'
+        date_to:     End date   'YYYY-MM-DD' (max 30-day range)
+        data_center: MoEngage data center, e.g. 'api-03' for India Dashboard 3
 
     Returns:
-        DataFrame in same format as load_from_csv() output
-
-    Reference: https://developers.moengage.com/hc/en-us/articles/4407912083219
+        DataFrame with MoEngage CSV-compatible column names (usable by build_master)
     """
     import requests
     import base64
-    import json
+    import uuid
 
-    # Basic auth: base64(app_id:secret_key)
     credentials = base64.b64encode(f'{app_id}:{secret_key}'.encode()).decode()
-
-    base_url = f'https://{data_center}.moengage.com'
-
-    # Campaign Reports endpoint
-    # MoEngage supports filtering by date range and campaign type
-    endpoint = f'{base_url}/v1/campaign/reports'
-
-    headers = {
-        'Authorization': f'Basic {credentials}',
-        'Content-Type': 'application/json',
-        'MOE-APPKEY': app_id,
-    }
-
-    params = {
-        'from': date_from,   # YYYY-MM-DD
-        'to': date_to,       # YYYY-MM-DD
-        'type': 'PUSH',      # Push notifications only
-        'limit': 500,        # campaigns per page
-        'offset': 0,
+    endpoint    = f'https://{data_center}.moengage.com/core-services/v1/campaign-stats'
+    headers     = {
+        'Authorization':  f'Basic {credentials}',
+        'MOE-APPKEY':     app_id,
+        'Content-Type':   'application/json',
     }
 
     all_campaigns = []
-    page = 0
+    offset = 0
+    limit  = 10   # MoEngage Stats API max per request
 
     while True:
-        params['offset'] = page * params['limit']
+        payload = {
+            'request_id':       str(uuid.uuid4()),
+            'start_date':       date_from,
+            'end_date':         date_to,
+            'attribution_type': 'CLICK_THROUGH',
+            'metric_type':      'TOTAL',
+            'offset':           offset,
+            'limit':            limit,
+        }
         try:
-            response = requests.get(endpoint, headers=headers, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
+            status = e.response.status_code if e.response is not None else 0
+            if status == 401:
                 raise ValueError(
-                    'MoEngage API authentication failed. Check your App ID and Secret Key in .env. '
-                    'Find them at: MoEngage → Settings → APIs → Data Export'
+                    'MoEngage API authentication failed. '
+                    'Check MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY. '
+                    'Find them at: MoEngage → Settings → APIs'
                 )
             raise
 
-        campaigns = data.get('data', data.get('campaigns', data.get('result', [])))
+        campaigns = data.get('data', {}).get('campaigns', [])
         if not campaigns:
             break
 
         all_campaigns.extend(campaigns)
 
-        # Check if there are more pages
-        total = data.get('total', data.get('count', len(campaigns)))
-        if len(all_campaigns) >= total or len(campaigns) < params['limit']:
+        total = data.get('data', {}).get('total', 0)
+        if len(all_campaigns) >= total or len(campaigns) < limit:
             break
 
-        page += 1
+        offset += limit
 
     if not all_campaigns:
         print(f'  MoEngage API returned 0 campaigns for {date_from} to {date_to}')
         return pd.DataFrame()
 
-    df = pd.json_normalize(all_campaigns)
+    df = _normalize_stats_response(all_campaigns)
 
-    # Apply same zero-sent filter as CSV loader
-    if COL_ALL_SENT in df.columns:
-        df[COL_ALL_SENT] = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
-        df = df[df[COL_ALL_SENT] > 0].reset_index(drop=True)
+    # Filter out zero-sent rows (same as CSV loader)
+    df[COL_ALL_SENT] = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
+    df = df[df[COL_ALL_SENT] > 0].reset_index(drop=True)
 
-    print(f'  MoEngage API: loaded {len(df)} campaigns ({date_from} to {date_to})')
+    print(f'  MoEngage API: {len(df)} campaigns loaded ({date_from} → {date_to})')
     return df
 
 
@@ -161,13 +195,9 @@ def load_last_n_days_from_api(
     app_id: str,
     secret_key: str,
     days: int = 7,
-    data_center: str = 'api-01',
+    data_center: str = 'api-03',
 ) -> pd.DataFrame:
-    """
-    Convenience function: load the last N days from MoEngage API.
-    Used for daily automated runs — pull last 7 days to catch any
-    late-arriving conversion data.
-    """
+    """Load the last N days from MoEngage Campaign Stats API."""
     from datetime import date, timedelta
     date_to   = date.today().strftime('%Y-%m-%d')
     date_from = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
