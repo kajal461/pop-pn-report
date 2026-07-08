@@ -138,7 +138,7 @@ Sortable. Defaults to sorted by CTR descending.
 | `MOENGAGE_SECRET_KEY` | ✅ Already added |
 | `GOOGLE_CLOUD_KEY_JSON` | ⚠️ User to add (paste full contents of `credentials/service_account.json`) |
 
-**Data center:** `api-01`
+**Data center:** `api-03` (MoEngage India — Dashboard 03)
 
 ### Failure handling
 - If the job fails, re-run manually: `python run_report.py --api --days 2`
