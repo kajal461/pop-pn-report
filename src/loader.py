@@ -59,25 +59,49 @@ def load_from_sheets(
     return raw_df, lookup_df
 
 
+def _get_all_platform_stats(item: dict) -> tuple:
+    """
+    Navigate the deeply nested Stats API response to get ALL_PLATFORMS aggregate stats.
+
+    Confirmed structure (from live API debug):
+      item['platforms']['ALL_PLATFORMS']['locales']['all_locale']
+          ['variations']['all_variations']['performance_stats']
+
+    Returns (performance_stats dict, conversion_goal_stats dict).
+    """
+    try:
+        all_plat = item.get('platforms', {}).get('ALL_PLATFORMS', {})
+        all_loc  = all_plat.get('locales', {}).get('all_locale', {})
+        all_var  = all_loc.get('variations', {}).get('all_variations', {})
+        ps  = all_var.get('performance_stats',    {}) or {}
+        cgs = all_var.get('conversion_goal_stats', {}) or {}
+        return ps, cgs
+    except (AttributeError, TypeError):
+        return {}, {}
+
+
 def _parse_campaigns_from_response(data: dict) -> list:
     """
     Extract campaign list from MoEngage Stats API response.
 
-    Actual response structure (confirmed from live API):
+    Confirmed response structure:
       {
-        "total_campaigns": N,
-        "current_page": N,
-        "total_pages": N,
-        "response_id": "...",
+        "total_campaigns": 2611,
+        "current_page": 1,
+        "total_pages": 262,
         "data": {
-          "<campaign_id>": [   ← list of platform/variation breakdowns
-            { "performance_stats": {...}, "conversion_goal_stats": {...}, ... },
-            ...
+          "<campaign_id>": [
+            { "platforms": { "ALL_PLATFORMS": { "locales": { "all_locale": {
+                "variations": { "all_variations": {
+                    "performance_stats": { "sent": N, "click": N, ... },
+                    "conversion_goal_stats": { ... }
+                }}}}}, "IOS": {...}, "ANDROID": {...} }
+            }
           ]
         }
       }
 
-    Aggregates all platform/variation entries into one row per campaign_id.
+    Returns only campaigns where ALL_PLATFORMS sent > 0 (active on this date).
     """
     raw_data = data.get('data', {})
     if not raw_data or not isinstance(raw_data, dict):
@@ -85,69 +109,41 @@ def _parse_campaigns_from_response(data: dict) -> list:
 
     campaigns = []
     for campaign_id, items in raw_data.items():
-
-        # Ensure items is always a list
         if isinstance(items, dict):
             items = [items]
         elif not isinstance(items, list):
             continue
 
-        # Aggregate all platform/variation items into one row
-        total_sent = 0
-        total_clicks = 0
-        total_impressions = 0
-        total_failed = 0
-        total_conv = 0
-        delivery_rate_weighted = 0.0
-        campaign_name = ''
-        campaign_type = 'Push Notification'
-        sent_time = ''
-
+        # Extract ALL_PLATFORMS stats from the first item that has them
+        ps, cgs = {}, {}
         for item in items:
-            if not isinstance(item, dict):
-                continue
+            if isinstance(item, dict):
+                ps, cgs = _get_all_platform_stats(item)
+                if ps:
+                    break
 
-            # Metadata: take first non-empty value
-            if not campaign_name:
-                campaign_name = (item.get('campaign_name') or
-                                 item.get('name') or '')
-            if not campaign_type or campaign_type == 'Push Notification':
-                campaign_type = item.get('campaign_type', 'Push Notification') or 'Push Notification'
-            if not sent_time:
-                sent_time = item.get('sent_time') or item.get('created_at') or ''
+        sent   = float(ps.get('sent', 0) or 0)
+        clicks = float(ps.get('click', 0) or 0)
 
-            ps  = item.get('performance_stats', {}) or {}
-            cgs = item.get('conversion_goal_stats', {}) or {}
+        # Skip campaigns that didn't send anything on this date
+        if sent == 0:
+            continue
 
-            sent   = float(ps.get('sent', 0) or 0)
-            clicks = float(ps.get('click', 0) or 0)
-            total_sent        += sent
-            total_clicks      += clicks
-            total_impressions += float(ps.get('impression', 0) or 0)
-            total_failed      += float(ps.get('failed', 0) or 0)
-            delivery_rate_weighted += sent * float(ps.get('delivery_rate', 0) or 0)
-
-            # Sum conversions across all goals
-            for goal_data in cgs.values():
-                if isinstance(goal_data, dict):
-                    total_conv += float(goal_data.get('conversions', 0) or 0)
-
-        # Derived metrics
-        ctr = (total_clicks / total_sent * 100) if total_sent > 0 else 0.0
-        delivery_rate = (delivery_rate_weighted / total_sent) if total_sent > 0 else 0.0
+        ctr = (clicks / sent * 100) if sent > 0 else 0.0
+        total_conv = sum(
+            float(g.get('conversions', 0) or 0)
+            for g in cgs.values() if isinstance(g, dict)
+        )
 
         campaigns.append({
-            'campaign_id':    campaign_id,
-            'campaign_name':  campaign_name,
-            'campaign_type':  campaign_type,
-            'sent_time':      sent_time,
-            'sent':           total_sent,
-            'clicks':         total_clicks,
-            'impressions':    total_impressions,
-            'failed':         total_failed,
-            'ctr':            round(ctr, 4),
-            'delivery_rate':  round(delivery_rate, 4),
-            'conversions':    total_conv,
+            'campaign_id':  campaign_id,
+            'sent':         sent,
+            'clicks':       clicks,
+            'impressions':  float(ps.get('impression', 0) or 0),
+            'failed':       float(ps.get('failed', 0) or 0),
+            'ctr':          round(ctr, 4),
+            'delivery_rate': float(ps.get('delivery_rate', 0) or 0),
+            'conversions':  total_conv,
         })
 
     return campaigns
@@ -155,16 +151,18 @@ def _parse_campaigns_from_response(data: dict) -> list:
 
 def _to_dataframe(campaigns: list) -> pd.DataFrame:
     """
-    Map aggregated campaign dicts to MoEngage CSV column names
-    so build_master() pipeline works unchanged.
+    Map aggregated Stats API campaign dicts to a DataFrame.
+    Campaign names and BU tags are added later by joining with master_enriched.
     """
+    if not campaigns:
+        return pd.DataFrame()
     rows = []
     for c in campaigns:
         rows.append({
             'Campaign ID':       c['campaign_id'],
-            'Campaign Name':     c['campaign_name'],
-            'Campaign Type':     c['campaign_type'],
-            'Campaign Sent Time': c['sent_time'],
+            'Campaign Name':     '',   # enriched from master_enriched in run_report.py
+            'Campaign Type':     'Push Notification',
+            'Campaign Sent Time': '',  # enriched from master_enriched
             'All Platform Sent':        c['sent'],
             'All Platform Impressions': c['impressions'],
             'All Platform Clicks':      c['clicks'],
@@ -215,7 +213,7 @@ def load_from_moengage_api(
     all_campaigns = []
     offset        = 0
     limit         = 10    # MoEngage Stats API max per request
-    max_pages     = 50    # hard safety cap — 50 × 10 = 500 campaigns max
+    max_pages     = 350   # 350 × 10 = 3500 campaigns — covers accounts with up to 3500 campaigns
 
     for _page_num in range(max_pages):
         payload = {
@@ -240,29 +238,10 @@ def load_from_moengage_api(
                 )
             raise
 
-        # Debug: print full first item of first page so we know the exact structure
-        if _page_num == 0:
-            raw_data_debug = data.get('data', {})
-            print(f'  total_campaigns={data.get("total_campaigns")} total_pages={data.get("total_pages")} current_page={data.get("current_page")}')
-            if isinstance(raw_data_debug, dict) and raw_data_debug:
-                first_key = next(iter(raw_data_debug))
-                first_val = raw_data_debug[first_key]
-                print(f'  First campaign_id: {first_key}')
-                print(f'  First value type: {type(first_val).__name__}')
-                if isinstance(first_val, list) and first_val:
-                    first_item = first_val[0]
-                    print(f'  First item keys: {list(first_item.keys()) if isinstance(first_item, dict) else first_item}')
-                    if isinstance(first_item, dict) and 'performance_stats' in first_item:
-                        print(f'  performance_stats: {first_item["performance_stats"]}')
-                    elif isinstance(first_item, dict):
-                        print(f'  Full first item: {first_item}')
-                elif isinstance(first_val, dict):
-                    print(f'  Value keys: {list(first_val.keys())}')
-                    if 'performance_stats' in first_val:
-                        print(f'  performance_stats: {first_val["performance_stats"]}')
-
         page_campaigns = _parse_campaigns_from_response(data)
-        print(f'  Page {_page_num + 1}: {len(page_campaigns)} campaigns (offset={offset})')
+        total_so_far = len(all_campaigns) + len(page_campaigns)
+        total_camp   = data.get('total_campaigns', '?')
+        print(f'  Page {_page_num + 1}: {len(page_campaigns)} active campaigns (offset={offset}, total scanned={total_so_far}/{total_camp})')
 
         if not page_campaigns:
             break

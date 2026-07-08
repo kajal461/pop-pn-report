@@ -114,13 +114,40 @@ def main() -> None:
     # ── DOD daily path ─────────────────────────────────────────────────────────
     if args.target == 'dod_daily':
         if args.no_upload or args.dry_run:
-            print(f'Skipping upload (--no-upload / --dry-run flag set). DOD master has {len(master)} rows.')
+            print(f'Skipping upload (--no-upload / --dry-run). DOD master has {len(master)} rows.')
             return
         if not project_id or not key_path:
             raise EnvironmentError('GCP_PROJECT_ID and GOOGLE_CLOUD_KEY_PATH must be set to upload.')
         from datetime import date, timedelta
         sent_date = args.date if args.date and args.date != 'yesterday' \
             else (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # Enrich with campaign names and BU tags from master_enriched
+        # Stats API only returns metrics — names/BU live in master_enriched
+        print('\nEnriching with campaign names and BU tags from master_enriched...')
+        try:
+            from src.bq_loader import load_table as _load_table
+            _master_ref = _load_table('master_enriched')
+            if not _master_ref.empty:
+                _camp_id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
+                _ref = _master_ref[[_camp_id_col, 'Campaign_Name', 'bu', 'tonality',
+                                     'Campaign_Sent_Time', 'copy_type']].copy()
+                _ref = _ref.rename(columns={
+                    _camp_id_col: 'Campaign ID',
+                    'Campaign_Name': 'Campaign Name',
+                    'Campaign_Sent_Time': 'Campaign Sent Time',
+                }).drop_duplicates(subset=['Campaign ID'], keep='last')
+                master = master.merge(_ref, on='Campaign ID', how='left', suffixes=('', '_ref'))
+                for col in ['Campaign Name', 'Campaign Sent Time']:
+                    if col + '_ref' in master.columns:
+                        master[col] = master[col + '_ref'].fillna(master.get(col, ''))
+                        master.drop(columns=[col + '_ref'], inplace=True)
+                    elif col not in master.columns:
+                        master[col] = ''
+                print(f'   -> Enriched {(master["Campaign Name"] != "").sum():,}/{len(master):,} campaigns with names from master_enriched')
+        except Exception as _e:
+            print(f'   -> Could not enrich from master_enriched: {_e}. Proceeding with campaign IDs only.')
+
         print(f'\nWriting {len(master):,} campaigns to dod_daily (sent_date={sent_date})...')
         upsert_dod_daily(
             project_id=project_id,
