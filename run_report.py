@@ -100,6 +100,11 @@ def main() -> None:
         raw_df, lookup_df = load_from_sheets(project_id, key_path)
         print(f'   -> {len(raw_df)} campaigns loaded from Google Sheets')
 
+    # ── Guard: empty API response ─────────────────────────────────────────
+    if raw_df.empty:
+        print('  No campaigns returned. Nothing to write — skipping.')
+        return
+
     # ── Enrich ────────────────────────────────────────────────────────────
     print('Building master enriched table...')
     master = build_master(raw_df, lookup_df)

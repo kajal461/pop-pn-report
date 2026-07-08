@@ -165,13 +165,33 @@ def load_from_moengage_api(
                 )
             raise
 
-        campaigns = data.get('data', {}).get('campaigns', [])
+        # Debug: show top-level keys so we can confirm response structure
+        top_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        print(f'  API response keys: {top_keys}')
+        if isinstance(data, dict) and 'data' in data:
+            inner_keys = list(data['data'].keys()) if isinstance(data['data'], dict) else type(data['data']).__name__
+            print(f'  data keys: {inner_keys}')
+
+        # Try multiple possible response paths
+        campaigns = (
+            data.get('data', {}).get('campaigns')
+            or data.get('data', {}).get('campaign_stats')
+            or data.get('data', {}).get('campaign_list')
+            or data.get('campaigns')
+            or data.get('campaign_stats')
+            or []
+        )
         if not campaigns:
+            print(f'  No campaigns found in response for offset={offset}')
             break
 
         all_campaigns.extend(campaigns)
 
-        total = data.get('data', {}).get('total', 0)
+        total = (
+            data.get('data', {}).get('total')
+            or data.get('total')
+            or len(campaigns)
+        )
         if len(all_campaigns) >= total or len(campaigns) < limit:
             break
 
