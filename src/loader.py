@@ -238,21 +238,21 @@ def load_from_moengage_api(
                 )
             raise
 
-        page_campaigns = _parse_campaigns_from_response(data)
-        total_so_far = len(all_campaigns) + len(page_campaigns)
-        total_camp   = data.get('total_campaigns', '?')
-        print(f'  Page {_page_num + 1}: {len(page_campaigns)} active campaigns (offset={offset}, total scanned={total_so_far}/{total_camp})')
+        # Count raw campaigns in this page (before sent>0 filter) for pagination
+        raw_count = len(data.get('data', {})) if isinstance(data.get('data'), dict) else 0
 
-        if not page_campaigns:
-            break
+        page_campaigns = _parse_campaigns_from_response(data)
+        total_camp     = int(data.get('total_campaigns', 0) or 0)
+        print(f'  Page {_page_num + 1}: {len(page_campaigns)} active / {raw_count} on page (offset={offset}, total={total_camp})')
 
         all_campaigns.extend(page_campaigns)
 
-        total_campaigns = int(data.get('total_campaigns', 0) or 0)
-        # Stop when we have all campaigns or got a partial page
-        if total_campaigns > 0 and len(all_campaigns) >= total_campaigns:
+        # Break only when the raw page is empty or partial (not based on filtered count)
+        if raw_count == 0:
             break
-        if len(page_campaigns) < limit:
+        if raw_count < limit:
+            break
+        if total_camp > 0 and (offset + limit) >= total_camp:
             break
 
         offset += limit
