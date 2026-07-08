@@ -80,8 +80,8 @@ Shown only when triggered. Yellow warning card:
 
 ### Section D: Month Trajectory
 - Days elapsed / days remaining in month
-- Projected month-end CTR (formula: `weighted_avg_daily_ctr × total_days`)
-- Comparison to previous month's final CTR
+- Projected month-end CTR (formula: `total clicks this month ÷ total sent this month` = current MTD CTR — the best estimate assuming remaining days perform similarly)
+- Comparison to previous month's final CTR (loaded from `summary_overall` table already in BigQuery)
 - Best day this month (date + CTR)
 - Worst day this month (date + CTR)
 
@@ -127,8 +127,10 @@ Sortable. Defaults to sorted by CTR descending.
 2. Set up Python 3.11
 3. Install `requirements.txt`
 4. Write GCP credentials from `GOOGLE_CLOUD_KEY_JSON` secret to temp file
-5. Run `python run_report.py --api --days 1 --target dod_daily`
+5. Run `python run_report.py --api --target dod_daily --date yesterday`
 6. Done — `dod_daily` in BigQuery is upserted with yesterday's campaigns
+
+**Note:** The job uses `--date yesterday` (not `--days 1`) to pull `date_from = yesterday, date_to = yesterday` — a single exact day. Using `--days 1` would compute `date_from = yesterday, date_to = today` and could include partial today data. All rows from this pull are stamped with `sent_date = yesterday`.
 
 **GitHub Secrets required:**
 
@@ -148,20 +150,22 @@ Sortable. Defaults to sorted by CTR descending.
 
 ## 5. run_report.py Changes
 
-Add `--target` flag:
-- `--target master_enriched` — existing behaviour (default)
-- `--target dod_daily` — writes to new DOD table with `sent_date` granularity
+Add two new flags:
+- `--target [master_enriched|dod_daily]` — destination table (default: `master_enriched`)
+- `--date yesterday` — pull exactly one day: `date_from = yesterday, date_to = yesterday`
 
-The DOD write path uses `upsert_dod_daily()` (new function), not `upsert_master_enriched()`.
+The DOD write path uses `upsert_dod_daily()` (new function), not `upsert_master_enriched()`.  
+`upsert_dod_daily()` stamps every row with `sent_date = yesterday` before upserting.
 
 ---
 
 ## 6. Dashboard Changes
 
-- New `load_dod_daily()` function in `src/bq_loader.py`
+- New `load_dod_daily()` function in `src/bq_loader.py` — loads `dod_daily` filtered to current calendar month
+- DOD page also calls `load_table('summary_overall')` — needed for "Pace vs June" comparison (June's final CTR already lives there)
 - New `render_dod_page()` function replacing the placeholder in `dashboard.py`
-- New `insights_dod(dod_df)` function for auto-generated bullets
-- Page added to sidebar: `📅 DOD Report`
+- New `insights_dod(dod_df, overall_df)` function for auto-generated bullets
+- Page already in sidebar as `📅 DOD Report` — placeholder exists, just needs replacement
 
 ---
 
