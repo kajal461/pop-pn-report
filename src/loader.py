@@ -165,34 +165,30 @@ def load_from_moengage_api(
                 )
             raise
 
-        # Debug: show top-level keys so we can confirm response structure
-        top_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-        print(f'  API response keys: {top_keys}')
-        if isinstance(data, dict) and 'data' in data:
-            inner_keys = list(data['data'].keys()) if isinstance(data['data'], dict) else type(data['data']).__name__
-            print(f'  data keys: {inner_keys}')
+        # data['data'] is a dict keyed by campaign_id → values are campaign objects
+        # e.g. {"69ce1ce2...": {performance_stats: {...}, ...}, ...}
+        raw_data = data.get('data', {})
+        if isinstance(raw_data, dict) and raw_data:
+            # Inject campaign_id as a field on each object
+            campaigns = [{'campaign_id': k, **v} for k, v in raw_data.items()]
+        elif isinstance(raw_data, list):
+            campaigns = raw_data
+        else:
+            campaigns = []
 
-        # Try multiple possible response paths
-        campaigns = (
-            data.get('data', {}).get('campaigns')
-            or data.get('data', {}).get('campaign_stats')
-            or data.get('data', {}).get('campaign_list')
-            or data.get('campaigns')
-            or data.get('campaign_stats')
-            or []
-        )
         if not campaigns:
-            print(f'  No campaigns found in response for offset={offset}')
             break
+
+        # Debug: show first campaign's keys so we can verify field names
+        if campaigns and not all_campaigns:
+            print(f'  First campaign keys: {list(campaigns[0].keys())}')
 
         all_campaigns.extend(campaigns)
 
-        total = (
-            data.get('data', {}).get('total')
-            or data.get('total')
-            or len(campaigns)
-        )
-        if len(all_campaigns) >= total or len(campaigns) < limit:
+        total_campaigns = data.get('total_campaigns', 0)
+        total_pages     = data.get('total_pages', 1)
+        current_page    = data.get('current_page', 1)
+        if current_page >= total_pages or len(all_campaigns) >= total_campaigns:
             break
 
         offset += limit
