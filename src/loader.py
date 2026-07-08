@@ -1,7 +1,5 @@
 # src/loader.py
 import pandas as pd
-import gspread
-from gspread_dataframe import get_as_dataframe
 from config import COL_ALL_SENT
 
 
@@ -32,6 +30,8 @@ def load_from_sheets(
     Requires a valid service account JSON key at key_path.
     Raises ValueError with a helpful message if a required tab is missing.
     """
+    import gspread
+    from gspread_dataframe import get_as_dataframe
     gc = gspread.service_account(filename=key_path)
     sh = gc.open_by_key(sheet_id)
 
