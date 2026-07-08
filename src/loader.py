@@ -240,6 +240,27 @@ def load_from_moengage_api(
                 )
             raise
 
+        # Debug: print full first item of first page so we know the exact structure
+        if _page_num == 0:
+            raw_data_debug = data.get('data', {})
+            print(f'  total_campaigns={data.get("total_campaigns")} total_pages={data.get("total_pages")} current_page={data.get("current_page")}')
+            if isinstance(raw_data_debug, dict) and raw_data_debug:
+                first_key = next(iter(raw_data_debug))
+                first_val = raw_data_debug[first_key]
+                print(f'  First campaign_id: {first_key}')
+                print(f'  First value type: {type(first_val).__name__}')
+                if isinstance(first_val, list) and first_val:
+                    first_item = first_val[0]
+                    print(f'  First item keys: {list(first_item.keys()) if isinstance(first_item, dict) else first_item}')
+                    if isinstance(first_item, dict) and 'performance_stats' in first_item:
+                        print(f'  performance_stats: {first_item["performance_stats"]}')
+                    elif isinstance(first_item, dict):
+                        print(f'  Full first item: {first_item}')
+                elif isinstance(first_val, dict):
+                    print(f'  Value keys: {list(first_val.keys())}')
+                    if 'performance_stats' in first_val:
+                        print(f'  performance_stats: {first_val["performance_stats"]}')
+
         page_campaigns = _parse_campaigns_from_response(data)
         print(f'  Page {_page_num + 1}: {len(page_campaigns)} campaigns (offset={offset})')
 
