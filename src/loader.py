@@ -323,11 +323,9 @@ def fetch_campaign_metadata(
             time.sleep(1)
 
         payload = {
-            'request_id':     str(uuid.uuid4()),
-            'campaign_fields': {
-                'channels': ['PUSH'],
-                'id':        campaign_id,
-            },
+            'request_id':              str(uuid.uuid4()),
+            'campaign_fields':         {'id': campaign_id},  # no channel filter — catch all types
+            'include_archive_campaigns': True,               # include archived/stopped campaigns
             'limit': 1,
             'page':  1,
         }
