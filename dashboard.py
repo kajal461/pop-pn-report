@@ -507,6 +507,8 @@ page = st.sidebar.radio('Navigate', [
     '⏰ Timing & Frequency',
     '📦 Segment Intelligence',
     '📡 Channel Intelligence',
+    '🧪 Control Group Analysis',
+    '📅 Day-Over-Day (DOD)',
 ])
 
 all_bus = sorted(master['bu'].dropna().unique().tolist()) if 'bu' in master.columns else []
@@ -3474,3 +3476,364 @@ elif page == '📡 Channel Intelligence':
         '⚠️ **If frequency fatigue confirmed:** Implement BU-level daily send caps; test "1 PN max per user per day" for 2 weeks',
         '📱 **Platform:** If iOS CTR significantly higher — build an iOS-specific copy brief and test premium-positioned messaging',
     ], box_type='success')
+
+elif page == '🧪 Control Group Analysis':
+    m = filtered_master.copy()
+    # Convert CG columns to numeric
+    for col in ['All_Platform_Active_Target_Control_Group', 'All_Platform_CTR',
+                'All_Platform_Sent', 'Android_Campaign_Control_Group_Percentage',
+                'primary_conversions', 'All_Platform_Clicks']:
+        if col in m.columns:
+            m[col] = pd.to_numeric(m[col], errors='coerce').fillna(0)
+
+    # Flag campaigns with CG
+    m['has_cg'] = m['All_Platform_Active_Target_Control_Group'] > 0
+    m['cg_size'] = m['All_Platform_Active_Target_Control_Group']
+    m['cg_pct'] = pd.to_numeric(m.get('Android_Campaign_Control_Group_Percentage', 0), errors='coerce').fillna(0)
+
+    # Statistical adequacy: CG needs ≥500 users for meaningful results at typical conversion rates
+    MIN_ADEQUATE_CG = 500
+    m['cg_adequate'] = m['has_cg'] & (m['cg_size'] >= MIN_ADEQUATE_CG)
+
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    if period_filtered: filter_label.append(', '.join([month_labels.get(x,x) for x in selected_months]))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs · All Months'
+
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">🧪 Control Group Analysis</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
+        Which campaigns are actually measuring true PN impact vs. guessing? Control groups are the only way to prove causation.
+    </p>
+    """, unsafe_allow_html=True)
+
+    total = len(m)
+    cg_count = m['has_cg'].sum()
+    adequate_count = m['cg_adequate'].sum()
+    cg_pct_total = cg_count / total * 100 if total > 0 else 0
+    adequate_pct = adequate_count / cg_count * 100 if cg_count > 0 else 0
+
+    # ── Metric cards ──────────────────────────────────────────────────────────
+    cards_html = (
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0">'
+        f'<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #4F46E5">'
+        f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Total Campaigns</div>'
+        f'<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{total:,}</div>'
+        f'<div style="font-size:11px;color:#94a3b8">in selected period/BU</div>'
+        f'</div>'
+        f'<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid {"#22c55e" if cg_pct_total>=50 else "#f59e0b"}">'
+        f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Have Control Group</div>'
+        f'<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{cg_count:,}</div>'
+        f'<div style="font-size:12px;color:{"#22c55e" if cg_pct_total>=50 else "#f59e0b"};font-weight:600">{cg_pct_total:.0f}% of campaigns</div>'
+        f'</div>'
+        f'<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid {"#22c55e" if adequate_pct>=70 else "#ef4444"}">'
+        f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Statistically Adequate CG</div>'
+        f'<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{adequate_count:,}</div>'
+        f'<div style="font-size:12px;color:{"#22c55e" if adequate_pct>=70 else "#ef4444"};font-weight:600">{adequate_pct:.0f}% of CG campaigns (≥{MIN_ADEQUATE_CG} users)</div>'
+        f'</div>'
+        f'<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:18px;border-top:4px solid #0891b2">'
+        f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Campaigns NOT Measured</div>'
+        f'<div style="font-size:34px;font-weight:800;color:#0f172a;margin:8px 0 2px">{total-cg_count:,}</div>'
+        f'<div style="font-size:11px;color:#94a3b8">No way to prove PN caused the conversion</div>'
+        f'</div>'
+        '</div>'
+    )
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+    if cg_pct_total < 30:
+        st.markdown(f"""
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin:8px 0">
+            <strong style="color:#dc2626">🚨 Low Control Group Coverage ({cg_pct_total:.0f}%)</strong><br>
+            <span style="color:#7f1d1d;font-size:13px">Only {cg_pct_total:.0f}% of campaigns have a control group. Without CGs, you can't prove PNs are causing conversions — users might have converted anyway. Increase CG coverage to ≥50% across all BUs.</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+    # ── CG Coverage by BU ────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Control Group Coverage by BU</div>', unsafe_allow_html=True)
+    st.caption('Green = ≥50% campaigns measured. Red = below 30%. Adequate CG = ≥500 users in control group.')
+
+    if 'bu' in m.columns:
+        bu_cg = m.groupby('bu').agg(
+            total=('All_Platform_CTR','count'),
+            with_cg=('has_cg','sum'),
+            adequate=('cg_adequate','sum'),
+            avg_cg_size=('cg_size','mean'),
+            ctr_with_cg=('All_Platform_CTR', lambda x: x[m.loc[x.index,'has_cg']].mean()),
+            ctr_no_cg=('All_Platform_CTR', lambda x: x[~m.loc[x.index,'has_cg']].mean()),
+        ).reset_index()
+        bu_cg['coverage_pct'] = bu_cg['with_cg'] / bu_cg['total'] * 100
+        bu_cg['adequate_pct'] = bu_cg.apply(lambda r: r['adequate']/r['with_cg']*100 if r['with_cg']>0 else 0, axis=1)
+        bu_cg = bu_cg.sort_values('coverage_pct', ascending=False)
+
+        col_cg1, col_cg2 = st.columns(2)
+        with col_cg1:
+            cover_cols = ['#22c55e' if r>=50 else ('#f59e0b' if r>=30 else '#ef4444') for r in bu_cg['coverage_pct']]
+            fig_cov = go.Figure(go.Bar(
+                x=bu_cg['bu'], y=bu_cg['coverage_pct'],
+                marker_color=cover_cols,
+                text=bu_cg.apply(lambda r: f"{r['coverage_pct']:.0f}% ({int(r['with_cg'])}/{int(r['total'])})", axis=1),
+                textposition='outside', textfont=dict(size=10),
+                hovertemplate='%{x}<br>Coverage: %{y:.0f}%<extra></extra>',
+            ))
+            fig_cov.add_hline(y=50, line_dash='dash', line_color='#22c55e', line_width=1.5,
+                              annotation_text='50% target', annotation_position='right')
+            fig_cov.update_layout(height=320, margin=dict(t=30,b=10,l=5,r=10),
+                                  plot_bgcolor='white', paper_bgcolor='white',
+                                  xaxis=dict(type='category',showgrid=False),
+                                  yaxis=dict(title='% Campaigns with CG',showgrid=True,gridcolor='#f1f5f9',range=[0,115]),
+                                  title=dict(text='CG Coverage Rate by BU',font=dict(size=12)))
+            st.plotly_chart(fig_cov, use_container_width=True)
+
+        with col_cg2:
+            fig_adq = go.Figure(go.Bar(
+                x=bu_cg['bu'], y=bu_cg['avg_cg_size'],
+                marker_color=['#22c55e' if v>=MIN_ADEQUATE_CG else '#ef4444' for v in bu_cg['avg_cg_size']],
+                text=bu_cg['avg_cg_size'].apply(lambda x: f'{x:,.0f}'),
+                textposition='outside', textfont=dict(size=10),
+            ))
+            fig_adq.add_hline(y=MIN_ADEQUATE_CG, line_dash='dash', line_color='#22c55e', line_width=1.5,
+                              annotation_text=f'{MIN_ADEQUATE_CG} min adequate', annotation_position='right')
+            fig_adq.update_layout(height=320, margin=dict(t=30,b=10,l=5,r=10),
+                                  plot_bgcolor='white', paper_bgcolor='white',
+                                  xaxis=dict(type='category',showgrid=False),
+                                  yaxis=dict(title='Avg CG Size (users)',showgrid=True,gridcolor='#f1f5f9'),
+                                  title=dict(text='Avg Control Group Size by BU',font=dict(size=12)))
+            st.plotly_chart(fig_adq, use_container_width=True)
+
+    # ── CG coverage trend MOM ──────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Control Group Usage Trend</div>', unsafe_allow_html=True)
+    st.caption('Are we running more measured experiments over time?')
+
+    if 'sent_month' in m.columns:
+        trend = m.groupby('sent_month').agg(
+            total=('has_cg','count'),
+            with_cg=('has_cg','sum'),
+        ).reset_index()
+        trend['coverage_pct'] = trend['with_cg'] / trend['total'] * 100
+        trend = trend.sort_values('sent_month')
+
+        fig_tr = go.Figure()
+        fig_tr.add_trace(go.Bar(x=trend['sent_month'], y=trend['total'], name='Total campaigns',
+                                 marker_color='#e2e8f0', opacity=0.7))
+        fig_tr.add_trace(go.Bar(x=trend['sent_month'], y=trend['with_cg'], name='With control group',
+                                 marker_color='#4F46E5'))
+        fig_tr.add_trace(go.Scatter(x=trend['sent_month'], y=trend['coverage_pct'],
+                                     name='Coverage %', yaxis='y2', mode='lines+markers+text',
+                                     text=trend['coverage_pct'].apply(lambda x: f'{x:.0f}%'),
+                                     textposition='top center', textfont=dict(size=11,color='#dc2626'),
+                                     line=dict(color='#dc2626',width=2.5), marker=dict(size=8,color='#dc2626')))
+        fig_tr.update_layout(
+            height=320, barmode='overlay',
+            margin=dict(t=20,b=10,l=5,r=60),
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(type='category',showgrid=False),
+            yaxis=dict(title='Campaigns',showgrid=True,gridcolor='#f1f5f9'),
+            yaxis2=dict(title='Coverage %',overlaying='y',side='right',showgrid=False,range=[0,100]),
+            legend=dict(orientation='h',yanchor='bottom',y=1.02,xanchor='right',x=1),
+        )
+        st.plotly_chart(fig_tr, use_container_width=True)
+
+    # ── Tested vs Untested CTR ──────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Measured vs Unmeasured Campaigns — CTR Comparison</div>', unsafe_allow_html=True)
+    st.caption('Do campaigns with CG perform differently? This shows if teams are using CGs for specific types of campaigns.')
+
+    if 'has_cg' in m.columns and 'All_Platform_CTR' in m.columns and 'bu' in m.columns:
+        m['cg_label'] = m['has_cg'].apply(lambda x: '🔬 With Control Group' if x else '📤 No Control Group')
+        tested = m.groupby(['bu','cg_label'])['All_Platform_CTR'].mean().reset_index()
+
+        fig_tv = go.Figure()
+        for label, colour in [('🔬 With Control Group','#4F46E5'),('📤 No Control Group','#94a3b8')]:
+            sub = tested[tested['cg_label']==label]
+            fig_tv.add_trace(go.Bar(
+                name=label, x=sub['bu'], y=sub['All_Platform_CTR'],
+                marker_color=colour,
+                text=sub['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%'),
+                textposition='outside', textfont=dict(size=10),
+            ))
+        fig_tv.update_layout(
+            barmode='group', height=320, margin=dict(t=20,b=10,l=5,r=10),
+            plot_bgcolor='white', paper_bgcolor='white',
+            xaxis=dict(type='category',showgrid=False),
+            yaxis=dict(title='Avg CTR (%)',showgrid=True,gridcolor='#f1f5f9'),
+            legend=dict(orientation='h',yanchor='bottom',y=1.02,xanchor='right',x=1),
+        )
+        st.plotly_chart(fig_tv, use_container_width=True)
+
+    # ── Key insights ──────────────────────────────────────────────────────────
+    cg_insights = []
+    cg_insights.append(f"📊 Only **{cg_pct_total:.0f}%** of campaigns ({cg_count:,}) have a control group — meaning {100-cg_pct_total:.0f}% of conversions cannot be proven to be caused by PNs.")
+    if adequate_pct < 70 and cg_count > 0:
+        cg_insights.append(f"⚠️ Only **{adequate_pct:.0f}%** of CG campaigns have an adequate sample size (≥{MIN_ADEQUATE_CG} users). Increase CG size for statistically meaningful results.")
+    if not bu_cg.empty:
+        worst_bu = bu_cg.iloc[-1]
+        cg_insights.append(f"🔴 **{worst_bu['bu']}** has the lowest CG coverage at **{worst_bu['coverage_pct']:.0f}%** — campaigns in this BU are running blind with no measurement.")
+        best_bu = bu_cg.iloc[0]
+        cg_insights.append(f"✅ **{best_bu['bu']}** leads with **{best_bu['coverage_pct']:.0f}%** CG coverage — a model for other BUs to follow.")
+    render_insight_box('Control Group Intelligence — Key Findings', cg_insights)
+
+    render_insight_box('Recommended next steps', [
+        f"🎯 **Set a CG coverage target of ≥50%** across all BUs — run at least half of all campaigns with a 5-10% holdout group",
+        f"📏 **Increase CG size to ≥{MIN_ADEQUATE_CG} users** for statistical significance — tiny CGs (60-100 users) produce unreliable uplift estimates",
+        "🔢 **Ask MoEngage to export CG CVR data** — currently CG conversion rates are not in the export; this would unlock true incremental lift analysis",
+        "📋 **Prioritize CG on high-volume BUs first** — Shop (437 campaigns) and RCBP (299) are the highest priority for measurement",
+    ], box_type='success')
+
+elif page == '📅 Day-Over-Day (DOD)':
+    from datetime import date, timedelta
+    import os as _os
+
+    filter_label = []
+    if bu_filtered: filter_label.append(', '.join(selected_bus))
+    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs'
+
+    st.markdown(f"""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">📅 Day-Over-Day (DOD)</h1>
+        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
+        Campaigns sent in the last 1–7 days with real-time performance. Pull fresh data from MoEngage API.
+    </p>
+    """, unsafe_allow_html=True)
+
+    # ── Date range selector ───────────────────────────────────────────────────
+    col_d1, col_d2, col_d3 = st.columns([1,1,2])
+    with col_d1:
+        days_back = st.selectbox('Show last', [1, 3, 7], index=1,
+                                  format_func=lambda x: f'{x} day{"s" if x>1 else ""}')
+    with col_d2:
+        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+        pull_api = st.button('🔄 Pull from MoEngage API', type='primary')
+
+    # ── Pull data from MoEngage API ───────────────────────────────────────────
+    if pull_api:
+        app_id     = _os.getenv('MOENGAGE_APP_ID') or (st.secrets.get('MOENGAGE_APP_ID','') if hasattr(st,'secrets') else '')
+        secret_key = _os.getenv('MOENGAGE_SECRET_KEY') or (st.secrets.get('MOENGAGE_SECRET_KEY','') if hasattr(st,'secrets') else '')
+        dc         = _os.getenv('MOENGAGE_DATA_CENTER','api-01')
+
+        if not app_id or not secret_key:
+            st.error('MoEngage API credentials not configured. Add MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY to your .env or Streamlit secrets.')
+        else:
+            with st.spinner(f'Pulling last {days_back} day(s) from MoEngage API...'):
+                try:
+                    from src.loader import load_last_n_days_from_api, load_lookup_from_csv
+                    from src.master_builder import build_master
+                    raw_api = load_last_n_days_from_api(app_id, secret_key, days=days_back, data_center=dc)
+                    if raw_api.empty:
+                        st.warning('No campaigns found in MoEngage for the selected period.')
+                    else:
+                        lookup = load_lookup_from_csv('tests/fixtures/sample_lookup.csv')
+                        dod_master = build_master(raw_api, lookup)
+                        st.session_state['dod_data'] = dod_master
+                        st.session_state['dod_days'] = days_back
+                        st.success(f'✅ Loaded {len(dod_master):,} campaigns from MoEngage API (last {days_back} day{"s" if days_back>1 else ""})')
+                except Exception as e:
+                    st.error(f'API error: {e}')
+
+    # ── Show DOD data ─────────────────────────────────────────────────────────
+    dod = st.session_state.get('dod_data', None)
+
+    if dod is None:
+        # Fall back to BigQuery filtered_master for recent dates
+        st.info('Click "Pull from MoEngage API" for live data, or see recent campaigns from BigQuery below.')
+        cutoff = (date.today() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        dod = filtered_master[
+            filtered_master['sent_date'].apply(
+                lambda x: str(x) >= cutoff if x is not None else False
+            )
+        ].copy() if 'sent_date' in filtered_master.columns else filtered_master.copy()
+
+    if dod.empty:
+        st.warning(f'No campaigns found in the last {days_back} day(s). Try pulling from the API.')
+    else:
+        for col in ['All_Platform_CTR','All_Platform_Sent','All_Platform_Clicks','primary_conversions']:
+            if col in dod.columns:
+                dod[col] = pd.to_numeric(dod[col], errors='coerce').fillna(0)
+
+        if selected_bus and 'bu' in dod.columns:
+            dod = dod[dod['bu'].isin(selected_bus)]
+
+        # ── DOD summary metrics ───────────────────────────────────────────────
+        total_sent_dod  = dod['All_Platform_Sent'].sum() if 'All_Platform_Sent' in dod.columns else 0
+        total_camps_dod = dod['Campaign_ID'].nunique() if 'Campaign_ID' in dod.columns else len(dod)
+        avg_ctr_dod     = (dod['All_Platform_CTR'] * dod['All_Platform_Sent']).sum() / total_sent_dod if total_sent_dod > 0 else 0
+        total_conv_dod  = dod['primary_conversions'].sum() if 'primary_conversions' in dod.columns else 0
+
+        def sfmt_dod(v):
+            try:
+                v=float(v)
+                return f'{v/1e6:.1f}M' if v>=1e6 else (f'{v/1000:.0f}K' if v>=1000 else f'{v:,.0f}')
+            except: return '—'
+
+        cards_dod = (
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0">'
+            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #4F46E5"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Campaigns</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{total_camps_dod:,}</div><div style="font-size:11px;color:#94a3b8">last {days_back} day(s)</div></div>'
+            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #22c55e"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Total Sent</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{sfmt_dod(total_sent_dod)}</div><div style="font-size:11px;color:#94a3b8">notifications</div></div>'
+            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #f59e0b"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Avg CTR</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{avg_ctr_dod:.2f}%</div><div style="font-size:11px;color:#94a3b8">weighted average</div></div>'
+            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #0891b2"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Conversions</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{sfmt_dod(total_conv_dod)}</div><div style="font-size:11px;color:#94a3b8">goal completions</div></div>'
+            '</div>'
+        )
+        st.markdown(cards_dod, unsafe_allow_html=True)
+
+        # ── CTR by BU for DOD ─────────────────────────────────────────────────
+        st.markdown('<div class="section-header">CTR by BU — Today\'s Performance</div>', unsafe_allow_html=True)
+        if 'bu' in dod.columns:
+            bu_dod = dod.groupby('bu').agg(
+                campaigns=('All_Platform_CTR','count'),
+                avg_ctr=('All_Platform_CTR','mean'),
+                total_sent=('All_Platform_Sent','sum'),
+            ).reset_index().sort_values('avg_ctr', ascending=False)
+            bu_dod['avg_ctr'] = bu_dod['avg_ctr'].clip(upper=100)
+            ctrs_dod = bu_dod['avg_ctr'].tolist()
+            mx_dod = max(ctrs_dod) if ctrs_dod else 1
+            mn_dod = min(ctrs_dod) if ctrs_dod else 0
+            bar_cols_dod = ['#22c55e' if c==mx_dod else ('#ef4444' if c==mn_dod else '#4F46E5') for c in ctrs_dod]
+            fig_dod_bu = go.Figure(go.Bar(
+                x=bu_dod['bu'], y=bu_dod['avg_ctr'],
+                marker_color=bar_cols_dod,
+                text=bu_dod.apply(lambda r: f"{r['avg_ctr']:.2f}% ({r['campaigns']} camps)", axis=1),
+                textposition='outside', textfont=dict(size=10),
+            ))
+            fig_dod_bu.update_layout(height=280, margin=dict(t=30,b=10,l=5,r=5),
+                                      plot_bgcolor='white', paper_bgcolor='white',
+                                      xaxis=dict(type='category',showgrid=False),
+                                      yaxis=dict(title='Avg CTR (%)',showgrid=True,gridcolor='#f1f5f9'))
+            st.plotly_chart(fig_dod_bu, use_container_width=True)
+
+        # ── Today's campaign list ─────────────────────────────────────────────
+        st.markdown('<div class="section-header">All Campaigns — Last ' + str(days_back) + ' Day(s)</div>', unsafe_allow_html=True)
+        title_col_dod = 'Android_Message_Title_Android_Web_Title_iOS'
+
+        show_cols_dod = [c for c in ['Campaign_ID','Campaign_Name','bu','sent_date',
+                                      title_col_dod,'All_Platform_Sent','All_Platform_CTR',
+                                      'primary_conversions','tonality','brand_compliant'] if c in dod.columns]
+        tbl_dod = dod[show_cols_dod].sort_values('All_Platform_CTR', ascending=False).head(50).copy()
+        if 'All_Platform_CTR' in tbl_dod.columns:
+            tbl_dod['All_Platform_CTR'] = tbl_dod['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%')
+        if 'All_Platform_Sent' in tbl_dod.columns:
+            tbl_dod['All_Platform_Sent'] = tbl_dod['All_Platform_Sent'].apply(lambda x: sfmt_dod(x))
+        if 'brand_compliant' in tbl_dod.columns:
+            tbl_dod['brand_compliant'] = tbl_dod['brand_compliant'].apply(lambda x: '✅' if str(x).lower() in ('true','1') else '❌')
+        if title_col_dod in tbl_dod.columns:
+            tbl_dod[title_col_dod] = tbl_dod[title_col_dod].astype(str).str[:50]
+
+        tbl_dod = tbl_dod.rename(columns={
+            'Campaign_Name':'Campaign','bu':'BU','sent_date':'Date',
+            title_col_dod:'Title','All_Platform_Sent':'Sent',
+            'All_Platform_CTR':'CTR','primary_conversions':'Conversions',
+            'brand_compliant':'Brand ✓'
+        })
+        st.dataframe(tbl_dod, use_container_width=True, hide_index=True)
+        if len(dod) > 50:
+            st.caption(f'Showing top 50 by CTR. {len(dod)-50} more campaigns not shown.')
+
+        render_insight_box('Recommended next steps', [
+            '📤 **Share this page with the team every morning** — gives a live pulse on yesterday\'s campaigns before stand-up',
+            '⚠️ **Flag low CTR campaigns immediately** — if a campaign sent to 50K+ users is below 0.5% CTR, investigate copy or targeting that day',
+            '🔄 **Set up daily automation** — run `python run_report.py --api --days 1` every morning to keep BigQuery updated without manual exports',
+        ], box_type='success')
