@@ -54,9 +54,34 @@ def load_table(table: str) -> pd.DataFrame:
     return pd.DataFrame([dict(row.items()) for row in rows])
 
 
+@st.cache_data(ttl=3600)
+def load_dod_daily() -> pd.DataFrame:
+    """
+    Load dod_daily table filtered to current calendar month.
+    Returns empty DataFrame if table doesn't exist yet (before first automation run).
+    """
+    from datetime import date
+    client = _client()
+    month_start = date.today().replace(day=1).strftime('%Y-%m-%d')
+    query = (
+        f'SELECT * FROM `{PROJECT_ID}.{DATASET}.dod_daily` '
+        f"WHERE sent_date >= '{month_start}' "
+        f'ORDER BY sent_date DESC'
+    )
+    try:
+        rows = client.query(query).result()
+        return pd.DataFrame([dict(row.items()) for row in rows])
+    except Exception:
+        return pd.DataFrame()
+
+
 def clear_all_caches() -> None:
     """Clear all bq_loader caches. Called by the Refresh Data button."""
     load_table.clear()  # clears the cache for this specific function
+    try:
+        load_dod_daily.clear()
+    except Exception:
+        pass
 
 
 def load_all() -> dict:

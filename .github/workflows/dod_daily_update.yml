@@ -1,0 +1,46 @@
+name: DOD Daily Update
+
+# Runs every day at 06:30 IST (01:00 UTC)
+# Pulls yesterday's campaigns from MoEngage API → upserts into BigQuery dod_daily table
+# Manual trigger available via GitHub Actions → Run workflow
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # UTC 01:00 = IST 06:30
+  workflow_dispatch:        # allow manual trigger from GitHub UI
+
+jobs:
+  update-dod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCP service account credentials
+        run: |
+          mkdir -p credentials
+          echo '${{ secrets.GOOGLE_CLOUD_KEY_JSON }}' > credentials/service_account.json
+
+      - name: Run DOD daily update
+        env:
+          MOENGAGE_APP_ID: ${{ secrets.MOENGAGE_APP_ID }}
+          MOENGAGE_SECRET_KEY: ${{ secrets.MOENGAGE_SECRET_KEY }}
+          MOENGAGE_DATA_CENTER: api-03
+          GCP_PROJECT_ID: copies-qc
+          GOOGLE_CLOUD_KEY_PATH: credentials/service_account.json
+          BQ_DATASET: pn_report
+        run: python run_report.py --api --date yesterday --target dod_daily
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f credentials/service_account.json

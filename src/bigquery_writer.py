@@ -213,6 +213,70 @@ def upsert_master_enriched(
     return combined
 
 
+def upsert_dod_daily(
+    project_id: str,
+    key_path: str,
+    new_data: pd.DataFrame,
+    sent_date: str,
+) -> None:
+    """
+    Upsert one day's campaign data into the dod_daily table.
+
+    - Stamps all rows with sent_date (the day being loaded, e.g. 'yesterday')
+    - Removes any existing rows for that sent_date first (safe re-run)
+    - Preserves all other dates untouched
+    - Table grows by one day's worth of rows per daily run
+
+    Args:
+        project_id: GCP project ID
+        key_path:   Path to service account JSON
+        new_data:   Enriched campaign DataFrame (output of build_master)
+        sent_date:  Date string 'YYYY-MM-DD' — the day these campaigns were sent
+    """
+    from datetime import datetime as _dt
+    from google.cloud import bigquery as _bq
+    from google.oauth2 import service_account as _sa
+
+    credentials = _sa.Credentials.from_service_account_file(
+        key_path, scopes=['https://www.googleapis.com/auth/cloud-platform']
+    )
+    client = _bq.Client(project=project_id, credentials=credentials)
+    _ensure_dataset(client, project_id)
+    table_ref = f'{project_id}.{BQ_DATASET}.dod_daily'
+
+    # Prepare new rows
+    new_clean = _clean_df(new_data.copy())
+    new_clean['sent_date']   = sent_date
+    new_clean['inserted_at'] = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Load existing dod_daily and remove rows for this date (avoid duplicates on re-run)
+    try:
+        existing = client.query(f'SELECT * FROM `{table_ref}`').to_dataframe()
+        if not existing.empty and 'sent_date' in existing.columns:
+            n_before = len(existing)
+            existing = existing[existing['sent_date'].astype(str) != sent_date]
+            n_removed = n_before - len(existing)
+            if n_removed:
+                print(f'  Removed {n_removed:,} stale rows for {sent_date} (re-run)')
+        existing_clean = _clean_df(existing) if not existing.empty else pd.DataFrame()
+    except Exception as e:
+        if 'Not found' in str(e) or 'notFound' in str(e).lower():
+            print('  No existing dod_daily — creating table on first run')
+        else:
+            print(f'  WARNING: Could not load existing dod_daily: {e}')
+        existing_clean = pd.DataFrame()
+
+    # Combine: all previous dates + new date
+    combined = (
+        pd.concat([existing_clean, new_clean], ignore_index=True)
+        if not existing_clean.empty
+        else new_clean.copy()
+    )
+
+    _write_table(client, project_id, 'dod_daily', combined)
+    print(f'  dod_daily: {len(new_clean):,} rows added for {sent_date} ({len(combined):,} total rows)')
+
+
 def write_to_bigquery(
     project_id: str,
     key_path: str,

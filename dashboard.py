@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.bq_loader import load_all, load_table
+from src.bq_loader import load_all, load_table, load_dod_daily
 from config import MIN_SENT_THRESHOLD
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -3684,156 +3684,437 @@ elif page == '🧪 Control Group Analysis':
     ], box_type='success')
 
 elif page == '📅 Day-Over-Day (DOD)':
-    from datetime import date, timedelta
-    import os as _os
+    import calendar as _cal
+    from datetime import date as _date, timedelta as _td
 
-    filter_label = []
-    if bu_filtered: filter_label.append(', '.join(selected_bus))
-    subtitle = ' · '.join(filter_label) if filter_label else 'All BUs'
+    # ── Load data ─────────────────────────────────────────────────────────────
+    dod_raw    = load_dod_daily()       # current month from dod_daily BQ table
+    overall_bq = load_table('summary_overall')  # for prior-month CTR comparison
 
+    # ── Date helpers ──────────────────────────────────────────────────────────
+    _today       = _date.today()
+    _yesterday   = _today - _td(days=1)
+    _day_before  = _today - _td(days=2)
+    _month_name  = _today.strftime('%B %Y')
+    _days_in_mo  = _cal.monthrange(_today.year, _today.month)[1]
+    _days_elapsed = _today.day - 1  # complete days so far (excluding today)
+    _days_remain  = _days_in_mo - (_today.day - 1)
+
+    # ── Last updated timestamp ────────────────────────────────────────────────
+    if not dod_raw.empty and 'inserted_at' in dod_raw.columns:
+        try:
+            _last_ts  = pd.to_datetime(dod_raw['inserted_at']).max()
+            _last_upd = _last_ts.strftime('%-d %b, %-I:%M %p')
+        except Exception:
+            _last_upd = 'Unknown'
+    else:
+        _last_upd = 'Not yet — runs daily at 6:30am IST'
+
+    # ── Page header ───────────────────────────────────────────────────────────
     st.markdown(f"""
-    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
-        <h1 style="margin:0;font-size:28px;font-weight:800">📅 Day-Over-Day (DOD)</h1>
-        <span style="font-size:14px;color:#64748b;font-weight:500">{subtitle}</span>
+    <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:2px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">📅 DOD Report</h1>
+        <span style="font-size:16px;color:#64748b;font-weight:600">{_month_name}</span>
+        <span style="font-size:12px;color:#94a3b8;margin-left:auto">🕐 Last updated: {_last_upd}</span>
     </div>
     <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
-        Campaigns sent in the last 1–7 days with real-time performance. Pull fresh data from MoEngage API.
+        Current month only · Auto-refreshes at 6:30am IST · Historical data persists in BigQuery
     </p>
     """, unsafe_allow_html=True)
 
-    # ── Date range selector ───────────────────────────────────────────────────
-    col_d1, col_d2, col_d3 = st.columns([1,1,2])
-    with col_d1:
-        days_back = st.selectbox('Show last', [1, 3, 7], index=1,
-                                  format_func=lambda x: f'{x} day{"s" if x>1 else ""}')
-    with col_d2:
-        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-        pull_api = st.button('🔄 Pull from MoEngage API', type='primary')
-
-    # ── Pull data from MoEngage API ───────────────────────────────────────────
-    if pull_api:
-        app_id     = _os.getenv('MOENGAGE_APP_ID') or (st.secrets.get('MOENGAGE_APP_ID','') if hasattr(st,'secrets') else '')
-        secret_key = _os.getenv('MOENGAGE_SECRET_KEY') or (st.secrets.get('MOENGAGE_SECRET_KEY','') if hasattr(st,'secrets') else '')
-        dc         = _os.getenv('MOENGAGE_DATA_CENTER','api-01')
-
-        if not app_id or not secret_key:
-            st.error('MoEngage API credentials not configured. Add MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY to your .env or Streamlit secrets.')
-        else:
-            with st.spinner(f'Pulling last {days_back} day(s) from MoEngage API...'):
-                try:
-                    from src.loader import load_last_n_days_from_api, load_lookup_from_csv
-                    from src.master_builder import build_master
-                    raw_api = load_last_n_days_from_api(app_id, secret_key, days=days_back, data_center=dc)
-                    if raw_api.empty:
-                        st.warning('No campaigns found in MoEngage for the selected period.')
-                    else:
-                        lookup = load_lookup_from_csv('tests/fixtures/sample_lookup.csv')
-                        dod_master = build_master(raw_api, lookup)
-                        st.session_state['dod_data'] = dod_master
-                        st.session_state['dod_days'] = days_back
-                        st.success(f'✅ Loaded {len(dod_master):,} campaigns from MoEngage API (last {days_back} day{"s" if days_back>1 else ""})')
-                except Exception as e:
-                    st.error(f'API error: {e}')
-
-    # ── Show DOD data ─────────────────────────────────────────────────────────
-    dod = st.session_state.get('dod_data', None)
-
-    if dod is None:
-        # Fall back to BigQuery filtered_master for recent dates
-        st.info('Click "Pull from MoEngage API" for live data, or see recent campaigns from BigQuery below.')
-        cutoff = (date.today() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-        dod = filtered_master[
-            filtered_master['sent_date'].apply(
-                lambda x: str(x) >= cutoff if x is not None else False
-            )
-        ].copy() if 'sent_date' in filtered_master.columns else filtered_master.copy()
-
-    if dod.empty:
-        st.warning(f'No campaigns found in the last {days_back} day(s). Try pulling from the API.')
-    else:
-        for col in ['All_Platform_CTR','All_Platform_Sent','All_Platform_Clicks','primary_conversions']:
-            if col in dod.columns:
-                dod[col] = pd.to_numeric(dod[col], errors='coerce').fillna(0)
-
-        if selected_bus and 'bu' in dod.columns:
-            dod = dod[dod['bu'].isin(selected_bus)]
-
-        # ── DOD summary metrics ───────────────────────────────────────────────
-        total_sent_dod  = dod['All_Platform_Sent'].sum() if 'All_Platform_Sent' in dod.columns else 0
-        total_camps_dod = dod['Campaign_ID'].nunique() if 'Campaign_ID' in dod.columns else len(dod)
-        avg_ctr_dod     = (dod['All_Platform_CTR'] * dod['All_Platform_Sent']).sum() / total_sent_dod if total_sent_dod > 0 else 0
-        total_conv_dod  = dod['primary_conversions'].sum() if 'primary_conversions' in dod.columns else 0
-
-        def sfmt_dod(v):
-            try:
-                v=float(v)
-                return f'{v/1e6:.1f}M' if v>=1e6 else (f'{v/1000:.0f}K' if v>=1000 else f'{v:,.0f}')
-            except: return '—'
-
-        cards_dod = (
-            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0">'
-            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #4F46E5"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Campaigns</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{total_camps_dod:,}</div><div style="font-size:11px;color:#94a3b8">last {days_back} day(s)</div></div>'
-            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #22c55e"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Total Sent</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{sfmt_dod(total_sent_dod)}</div><div style="font-size:11px;color:#94a3b8">notifications</div></div>'
-            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #f59e0b"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Avg CTR</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{avg_ctr_dod:.2f}%</div><div style="font-size:11px;color:#94a3b8">weighted average</div></div>'
-            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;border-top:4px solid #0891b2"><div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase">Conversions</div><div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{sfmt_dod(total_conv_dod)}</div><div style="font-size:11px;color:#94a3b8">goal completions</div></div>'
-            '</div>'
+    # ── No data state ─────────────────────────────────────────────────────────
+    if dod_raw.empty:
+        st.info(
+            '📭 **No DOD data yet for this month.**\n\n'
+            'The GitHub Actions job runs automatically at **6:30am IST every day** and will populate this page. '
+            'It pulls yesterday\'s campaigns from MoEngage API and stores them in BigQuery.\n\n'
+            'First data will appear tomorrow morning after the job runs.'
         )
-        st.markdown(cards_dod, unsafe_allow_html=True)
+        st.stop()
 
-        # ── CTR by BU for DOD ─────────────────────────────────────────────────
-        st.markdown('<div class="section-header">CTR by BU — Today\'s Performance</div>', unsafe_allow_html=True)
-        if 'bu' in dod.columns:
-            bu_dod = dod.groupby('bu').agg(
-                campaigns=('All_Platform_CTR','count'),
-                avg_ctr=('All_Platform_CTR','mean'),
-                total_sent=('All_Platform_Sent','sum'),
-            ).reset_index().sort_values('avg_ctr', ascending=False)
-            bu_dod['avg_ctr'] = bu_dod['avg_ctr'].clip(upper=100)
-            ctrs_dod = bu_dod['avg_ctr'].tolist()
-            mx_dod = max(ctrs_dod) if ctrs_dod else 1
-            mn_dod = min(ctrs_dod) if ctrs_dod else 0
-            bar_cols_dod = ['#22c55e' if c==mx_dod else ('#ef4444' if c==mn_dod else '#4F46E5') for c in ctrs_dod]
-            fig_dod_bu = go.Figure(go.Bar(
-                x=bu_dod['bu'], y=bu_dod['avg_ctr'],
-                marker_color=bar_cols_dod,
-                text=bu_dod.apply(lambda r: f"{r['avg_ctr']:.2f}% ({r['campaigns']} camps)", axis=1),
-                textposition='outside', textfont=dict(size=10),
-            ))
-            fig_dod_bu.update_layout(height=280, margin=dict(t=30,b=10,l=5,r=5),
-                                      plot_bgcolor='white', paper_bgcolor='white',
-                                      xaxis=dict(type='category',showgrid=False),
-                                      yaxis=dict(title='Avg CTR (%)',showgrid=True,gridcolor='#f1f5f9'))
-            st.plotly_chart(fig_dod_bu, use_container_width=True)
+    # ── Normalise column types ────────────────────────────────────────────────
+    _num_cols = ['All_Platform_Sent','All_Platform_CTR','All_Platform_Clicks',
+                 'primary_conversions','All_Platform_FCM_Delivery_Rate',
+                 'click_to_convert_rate','end_to_end_funnel_rate','reachability_rate']
+    for _c in _num_cols:
+        if _c in dod_raw.columns:
+            dod_raw[_c] = pd.to_numeric(dod_raw[_c], errors='coerce').fillna(0)
+    if 'sent_date' in dod_raw.columns:
+        dod_raw['sent_date'] = pd.to_datetime(dod_raw['sent_date']).dt.date
 
-        # ── Today's campaign list ─────────────────────────────────────────────
-        st.markdown('<div class="section-header">All Campaigns — Last ' + str(days_back) + ' Day(s)</div>', unsafe_allow_html=True)
-        title_col_dod = 'Android_Message_Title_Android_Web_Title_iOS'
+    # ── Filters ───────────────────────────────────────────────────────────────
+    _avail_dates = sorted(dod_raw['sent_date'].unique()) if 'sent_date' in dod_raw.columns else []
+    _date_opts   = ['All days'] + [str(d) for d in _avail_dates]
+    _dod_bus     = sorted(dod_raw['bu'].dropna().unique().tolist()) if 'bu' in dod_raw.columns else []
 
-        show_cols_dod = [c for c in ['Campaign_ID','Campaign_Name','bu','sent_date',
-                                      title_col_dod,'All_Platform_Sent','All_Platform_CTR',
-                                      'primary_conversions','tonality','brand_compliant'] if c in dod.columns]
-        tbl_dod = dod[show_cols_dod].sort_values('All_Platform_CTR', ascending=False).head(50).copy()
-        if 'All_Platform_CTR' in tbl_dod.columns:
-            tbl_dod['All_Platform_CTR'] = tbl_dod['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%')
-        if 'All_Platform_Sent' in tbl_dod.columns:
-            tbl_dod['All_Platform_Sent'] = tbl_dod['All_Platform_Sent'].apply(lambda x: sfmt_dod(x))
-        if 'brand_compliant' in tbl_dod.columns:
-            tbl_dod['brand_compliant'] = tbl_dod['brand_compliant'].apply(lambda x: '✅' if str(x).lower() in ('true','1') else '❌')
-        if title_col_dod in tbl_dod.columns:
-            tbl_dod[title_col_dod] = tbl_dod[title_col_dod].astype(str).str[:50]
+    _fc1, _fc2 = st.columns([1, 1])
+    with _fc1:
+        _sel_date = st.selectbox('📆 Day filter', _date_opts, index=0)
+    with _fc2:
+        _sel_bu = st.multiselect('🏢 BU filter', _dod_bus, default=_dod_bus)
 
-        tbl_dod = tbl_dod.rename(columns={
-            'Campaign_Name':'Campaign','bu':'BU','sent_date':'Date',
-            title_col_dod:'Title','All_Platform_Sent':'Sent',
-            'All_Platform_CTR':'CTR','primary_conversions':'Conversions',
-            'brand_compliant':'Brand ✓'
+    # ── Daily aggregate helper ────────────────────────────────────────────────
+    def _day_agg(df):
+        """Aggregate campaign rows by sent_date → one row per day."""
+        if df.empty or 'sent_date' not in df.columns:
+            return pd.DataFrame()
+        _s = 'All_Platform_Sent'
+        _ctr = 'All_Platform_CTR'
+        _cid = 'Campaign_ID' if 'Campaign_ID' in df.columns else df.columns[0]
+        _conv = 'primary_conversions'
+        df = df.copy()
+        df['_wt_clicks'] = df[_s] * df[_ctr] / 100 if _ctr in df.columns else 0
+        agg = df.groupby('sent_date').agg(
+            campaigns=(_cid, 'nunique'),
+            sent=(_s, 'sum') if _s in df.columns else (_cid, 'count'),
+            wt_clicks=('_wt_clicks', 'sum'),
+            conversions=(_conv, 'sum') if _conv in df.columns else (_cid, 'count'),
+        ).reset_index()
+        agg['ctr'] = (agg['wt_clicks'] / agg['sent'].replace(0, float('nan')) * 100).fillna(0).round(2)
+        return agg.sort_values('sent_date')
+
+    _daily = _day_agg(dod_raw)
+
+    def _sfmt(v):
+        try:
+            v = float(v)
+            return f'{v/1e6:.1f}M' if v >= 1e6 else (f'{v/1000:.0f}K' if v >= 1000 else f'{v:,.0f}')
+        except Exception:
+            return '—'
+
+    def _delta_card(label, val, delta_val, delta_pct, color, unit='', pct_mode=False):
+        """Render one metric card with delta arrow."""
+        arrow = '↑' if delta_val > 0 else ('↓' if delta_val < 0 else '→')
+        d_color = '#22c55e' if delta_val > 0 else ('#ef4444' if delta_val < 0 else '#94a3b8')
+        if pct_mode:
+            d_str = f'{arrow} {abs(delta_val):.2f}pp'
+        else:
+            d_str = f'{arrow} {_sfmt(abs(delta_val))} ({abs(delta_pct):.1f}%)' if delta_pct else f'{arrow} {_sfmt(abs(delta_val))}'
+        return (
+            f'<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;'
+            f'padding:16px 18px;border-top:4px solid #{color}">'
+            f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px">{label}</div>'
+            f'<div style="font-size:30px;font-weight:800;color:#0f172a;margin:6px 0">{val}</div>'
+            f'<div style="font-size:12px;color:{d_color};font-weight:600">{d_str} vs prev day</div>'
+            f'</div>'
+        )
+
+    # ── Yesterday's data ──────────────────────────────────────────────────────
+    _yd_str  = str(_yesterday)
+    _db_str  = str(_day_before)
+    _yd_row  = _daily[_daily['sent_date'].astype(str) == _yd_str]
+    _db_row  = _daily[_daily['sent_date'].astype(str) == _db_str]
+
+    _yd_camps = int(_yd_row['campaigns'].iloc[0]) if not _yd_row.empty else 0
+    _yd_sent  = float(_yd_row['sent'].iloc[0])    if not _yd_row.empty else 0
+    _yd_ctr   = float(_yd_row['ctr'].iloc[0])     if not _yd_row.empty else 0
+    _yd_conv  = float(_yd_row['conversions'].iloc[0]) if not _yd_row.empty else 0
+
+    _db_camps = int(_db_row['campaigns'].iloc[0]) if not _db_row.empty else 0
+    _db_sent  = float(_db_row['sent'].iloc[0])    if not _db_row.empty else 0
+    _db_ctr   = float(_db_row['ctr'].iloc[0])     if not _db_row.empty else 0
+    _db_conv  = float(_db_row['conversions'].iloc[0]) if not _db_row.empty else 0
+
+    _d_camps = _yd_camps - _db_camps
+    _d_sent  = _yd_sent  - _db_sent
+    _d_ctr   = _yd_ctr   - _db_ctr
+    _d_conv  = _yd_conv  - _db_conv
+    _pct_sent = (_d_sent / _db_sent * 100) if _db_sent else 0
+    _pct_conv = (_d_conv / _db_conv * 100) if _db_conv else 0
+
+    # ── MTD aggregates ────────────────────────────────────────────────────────
+    _mtd_sent  = float(_daily['sent'].sum())       if not _daily.empty else 0
+    _mtd_wt_cl = float((_daily['wt_clicks']).sum()) if 'wt_clicks' in _daily.columns else 0
+    _mtd_ctr   = (_mtd_wt_cl / _mtd_sent * 100)   if _mtd_sent else 0
+    _mtd_conv  = float(_daily['conversions'].sum()) if not _daily.empty else 0
+    _mtd_camps = int(dod_raw['Campaign_ID'].nunique()) if 'Campaign_ID' in dod_raw.columns else 0
+
+    # Prior month CTR from summary_overall
+    _prev_ctr = None
+    if not overall_bq.empty and 'period_label' in overall_bq.columns:
+        _prev_month_str = (_today.replace(day=1) - _td(days=1)).strftime('%Y-%m')
+        _prev_row = overall_bq[overall_bq['period_label'].astype(str).str.startswith(_prev_month_str)]
+        if not _prev_row.empty:
+            _ctr_col_bq = 'All_Platform_CTR' if 'All_Platform_CTR' in _prev_row.columns else None
+            if _ctr_col_bq:
+                _prev_ctr = float(pd.to_numeric(_prev_row[_ctr_col_bq], errors='coerce').iloc[-1])
+
+    # ── Section A: Yesterday's Pulse ──────────────────────────────────────────
+    _yd_label = _yesterday.strftime('%-d %b')
+    _db_label = _day_before.strftime('%-d %b')
+    st.markdown(f'<div class="section-header">⚡ Yesterday\'s Pulse — {_yd_label} vs {_db_label}</div>', unsafe_allow_html=True)
+
+    if _yd_sent == 0:
+        st.info(f'No data yet for {_yd_label}. The automation job will populate this at 6:30am IST.')
+    else:
+        _pulse_html = (
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0">'
+            + _delta_card('Campaigns', f'{_yd_camps:,}',   _d_camps, 0,        '4F46E5')
+            + _delta_card('Sent',      _sfmt(_yd_sent),    _d_sent,  _pct_sent, '22c55e')
+            + _delta_card('CTR',       f'{_yd_ctr:.2f}%',  _d_ctr,   0,        'f59e0b', pct_mode=True)
+            + _delta_card('Conversions', _sfmt(_yd_conv),  _d_conv,  _pct_conv, '0891b2')
+            + '</div>'
+        )
+        st.markdown(_pulse_html, unsafe_allow_html=True)
+
+        # Context line
+        _prev_pace = f'Pace vs {(_today.replace(day=1) - _td(days=1)).strftime("%b")}: {_mtd_ctr - _prev_ctr:+.2f}pp' if _prev_ctr else ''
+        st.markdown(
+            f'<p style="color:#64748b;font-size:13px;margin:4px 0 12px">'
+            f'Month avg CTR so far: <strong>{_mtd_ctr:.2f}%</strong>'
+            + (f' &nbsp;|&nbsp; {_prev_pace}' if _prev_pace else '')
+            + '</p>',
+            unsafe_allow_html=True
+        )
+
+    # ── Section B: Insights — What happened yesterday ─────────────────────────
+    if not _daily.empty and _yd_sent > 0:
+        _ins_yd = []
+        # CTR rank
+        _sorted_days = _daily.sort_values('ctr', ascending=False).reset_index(drop=True)
+        _yd_rank = _sorted_days[_sorted_days['sent_date'].astype(str) == _yd_str].index
+        if len(_yd_rank) > 0:
+            _rank = int(_yd_rank[0]) + 1
+            _total_d = len(_sorted_days)
+            _ord = {1:'1st',2:'2nd',3:'3rd'}.get(_rank, f'{_rank}th')
+            _ins_yd.append(f'Yesterday\'s **{_yd_ctr:.2f}% CTR** is the **{_ord} highest** day in {_today.strftime("%B")} (out of {_total_d} days with data).')
+
+        # BU highlight (top BU yesterday by volume)
+        if 'bu' in dod_raw.columns:
+            _yd_data = dod_raw[dod_raw['sent_date'].astype(str) == _yd_str]
+            if not _yd_data.empty:
+                _bu_yd = _yd_data.groupby('bu').agg(
+                    sent=('All_Platform_Sent','sum'),
+                    wt_cl=('All_Platform_Sent', lambda x: (x * _yd_data.loc[x.index,'All_Platform_CTR'] / 100).sum()),
+                ).reset_index()
+                _bu_yd['ctr'] = (_bu_yd['wt_cl'] / _bu_yd['sent'].replace(0, float('nan')) * 100).fillna(0)
+                _top_bu_vol = _bu_yd.sort_values('sent', ascending=False).iloc[0]
+                _top_bu_ctr = _bu_yd.sort_values('ctr', ascending=False).iloc[0]
+                _vol_pct = int(_top_bu_vol['sent'] / _yd_sent * 100) if _yd_sent else 0
+                _ins_yd.append(f'**{_top_bu_vol["bu"]}** drove **{_vol_pct}%** of yesterday\'s notifications ({_sfmt(_top_bu_vol["sent"])}).')
+                if _top_bu_ctr['bu'] != _top_bu_vol['bu']:
+                    _ins_yd.append(f'**{_top_bu_ctr["bu"]}** had the highest CTR yesterday at **{_top_bu_ctr["ctr"]:.2f}%**.')
+
+        # 3-day trend
+        _last3 = _daily.tail(3)
+        if len(_last3) >= 3:
+            _ctrs3 = _last3['ctr'].tolist()
+            if _ctrs3[-1] > _ctrs3[-2] > _ctrs3[-3]:
+                _ins_yd.append(f'CTR has been **trending upward** for 3 consecutive days ({" → ".join(f"{c:.2f}%" for c in _ctrs3)}).')
+            elif _ctrs3[-1] < _ctrs3[-2] < _ctrs3[-3]:
+                _ins_yd.append(f'CTR has been **declining for 3 consecutive days** ({" → ".join(f"{c:.2f}%" for c in _ctrs3)}) — worth reviewing recent campaigns.')
+
+        # Top campaign yesterday
+        if not _yd_data.empty and 'All_Platform_CTR' in _yd_data.columns:
+            _top_camp = _yd_data.sort_values('All_Platform_CTR', ascending=False).iloc[0]
+            _camp_nm  = str(_top_camp.get('Campaign_Name', _top_camp.get('Campaign_ID', '—')))[:45]
+            _top_ctr  = float(_top_camp['All_Platform_CTR'])
+            if _yd_ctr > 0:
+                _mult = _top_ctr / _yd_ctr
+                _ins_yd.append(f'⭐ **Top campaign:** "{_camp_nm}" — **{_top_ctr:.2f}% CTR** ({_mult:.1f}x the day\'s average).')
+
+        render_insight_box('What happened yesterday', _ins_yd, box_type='info')
+
+    # ── Section C: Anomaly banner ─────────────────────────────────────────────
+    if len(_daily) >= 3:
+        _anomalies = []
+        for _, _dr in _daily.iterrows():
+            _d_date = _dr['sent_date']
+            _d_ctr  = float(_dr['ctr'])
+            # Running avg up to (but not including) this day
+            _prior = _daily[_daily['sent_date'] < _d_date]
+            if _prior.empty:
+                continue
+            _run_avg = float(
+                (_prior['wt_clicks'].sum() / _prior['sent'].replace(0, float('nan')).sum() * 100)
+                if _prior['sent'].sum() > 0 else _prior['ctr'].mean()
+            )
+            if _run_avg > 0 and _d_ctr < _run_avg * 0.80:
+                _drop_pct = int((1 - _d_ctr / _run_avg) * 100)
+                _anomalies.append((_d_date, _d_ctr, _run_avg, _drop_pct))
+
+        if _anomalies:
+            for _ad, _ac, _aa, _ap in _anomalies:
+                _fcm_note = ''
+                _day_data_a = dod_raw[dod_raw['sent_date'].astype(str) == str(_ad)]
+                if 'All_Platform_FCM_Delivery_Rate' in _day_data_a.columns:
+                    _low_fcm = (_day_data_a['All_Platform_FCM_Delivery_Rate'] < 40).sum()
+                    if _low_fcm > 0:
+                        _fcm_note = f' {_low_fcm} campaign(s) had FCM delivery rate < 40% — possible delivery issue.'
+                _ad_fmt = pd.to_datetime(str(_ad)).strftime('%-d %b')
+                st.markdown(f"""
+                <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:14px 18px;margin:10px 0">
+                    <div style="font-weight:700;color:#92400e;font-size:14px;margin-bottom:4px">
+                        ⚠️ Anomaly detected: {_ad_fmt}
+                    </div>
+                    <div style="color:#78350f;font-size:13px">
+                        CTR on {_ad_fmt} was <strong>{_ac:.2f}%</strong> — <strong>{_ap}% below</strong> the running monthly average at that point ({_aa:.2f}%).{_fcm_note}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── Section D: Month Trajectory ───────────────────────────────────────────
+    st.markdown(f'<div class="section-header">📈 Month Trajectory — {_month_name}</div>', unsafe_allow_html=True)
+
+    _best_row  = _daily.loc[_daily['ctr'].idxmax()] if not _daily.empty else None
+    _worst_row = _daily.loc[_daily['ctr'].idxmin()] if not _daily.empty else None
+
+    _traj_col1, _traj_col2, _traj_col3 = st.columns(3)
+    with _traj_col1:
+        st.metric('Days elapsed', f'{_days_elapsed} of {_days_in_mo}',
+                  delta=f'{_days_remain} remaining', delta_color='off')
+    with _traj_col2:
+        _proj_str = f'{_mtd_ctr:.2f}%'
+        _proj_delta = f'{_mtd_ctr - _prev_ctr:+.2f}pp vs {(_today.replace(day=1) - _td(days=1)).strftime("%b")}' if _prev_ctr else None
+        st.metric('Projected month-end CTR', _proj_str, delta=_proj_delta)
+    with _traj_col3:
+        st.metric('MTD Campaigns', f'{_mtd_camps:,}',
+                  delta=f'{_sfmt(_mtd_sent)} notifications sent')
+
+    if _best_row is not None and _worst_row is not None:
+        _best_d  = pd.to_datetime(str(_best_row['sent_date'])).strftime('%-d %b')
+        _worst_d = pd.to_datetime(str(_worst_row['sent_date'])).strftime('%-d %b')
+        st.markdown(
+            f'<p style="color:#64748b;font-size:13px;margin:8px 0">'
+            f'🏆 <strong>Best day:</strong> {_best_d} · {float(_best_row["ctr"]):.2f}% CTR'
+            f' &nbsp;&nbsp; 💔 <strong>Worst day:</strong> {_worst_d} · {float(_worst_row["ctr"]):.2f}% CTR</p>',
+            unsafe_allow_html=True
+        )
+
+    # Month pace insights
+    _pace_ins = []
+    if _prev_ctr:
+        _prev_mo_name = (_today.replace(day=1) - _td(days=1)).strftime('%B')
+        if _mtd_ctr > _prev_ctr:
+            _pace_ins.append(f'At current pace, {_today.strftime("%B")} will close at **{_mtd_ctr:.2f}% CTR** — **{_mtd_ctr - _prev_ctr:+.2f}pp above** {_prev_mo_name}\'s close.')
+        else:
+            _pace_ins.append(f'At current pace, {_today.strftime("%B")} will close at **{_mtd_ctr:.2f}% CTR** — **{abs(_mtd_ctr - _prev_ctr):.2f}pp below** {_prev_mo_name} ({_prev_ctr:.2f}%). Room to improve.')
+
+    if 'bu' in dod_raw.columns and not overall_bq.empty:
+        _bu_mtd = dod_raw.groupby('bu').apply(
+            lambda g: pd.Series({
+                'ctr': (g['All_Platform_Sent'] * g['All_Platform_CTR']).sum() / g['All_Platform_Sent'].sum() if g['All_Platform_Sent'].sum() > 0 else 0
+            })
+        ).reset_index()
+        if _prev_ctr:
+            _strong_bus = _bu_mtd[_bu_mtd['ctr'] > _prev_ctr]['bu'].tolist()
+            _lag_bus    = _bu_mtd[_bu_mtd['ctr'] <= _prev_ctr]['bu'].tolist()
+            if _strong_bus:
+                _pace_ins.append(f'**Outperforming vs {_prev_mo_name}:** {", ".join(_strong_bus)}.')
+            if _lag_bus:
+                _pace_ins.append(f'**Lagging vs {_prev_mo_name}:** {", ".join(_lag_bus)} — worth a copy/targeting review.')
+
+    if _pace_ins:
+        render_insight_box(f'Month pace — {_today.strftime("%B")}', _pace_ins, box_type='success')
+
+    # ── Section E: Day-by-Day Chart ───────────────────────────────────────────
+    st.markdown('<div class="section-header">📊 Day-by-Day Performance</div>', unsafe_allow_html=True)
+
+    if not _daily.empty:
+        _chart_dates = [pd.to_datetime(str(d)).strftime('%-d %b') for d in _daily['sent_date']]
+        _fig_dod = go.Figure()
+        _fig_dod.add_trace(go.Bar(
+            name='Sent', x=_chart_dates, y=_daily['sent'],
+            marker_color='#bfdbfe', opacity=0.7, yaxis='y2',
+            hovertemplate='%{x}<br>Sent: %{y:,.0f}<extra></extra>',
+        ))
+        _fig_dod.add_trace(go.Scatter(
+            name='CTR %', x=_chart_dates, y=_daily['ctr'],
+            mode='lines+markers', line=dict(color='#4F46E5', width=2.5),
+            marker=dict(size=7, color='#4F46E5'),
+            hovertemplate='%{x}<br>CTR: %{y:.2f}%<br>Campaigns: ' +
+                          _daily['campaigns'].astype(str) + '<extra></extra>',
+        ))
+        _fig_dod.update_layout(
+            height=320, margin=dict(t=20,b=30,l=5,r=5),
+            plot_bgcolor='white', paper_bgcolor='white',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+            xaxis=dict(showgrid=False, type='category'),
+            yaxis=dict(title='CTR (%)', showgrid=True, gridcolor='#f1f5f9', side='left'),
+            yaxis2=dict(title='Sent', overlaying='y', side='right', showgrid=False),
+            hovermode='x unified',
+        )
+        st.plotly_chart(_fig_dod, use_container_width=True)
+
+    # ── Section F: BU Breakdown ───────────────────────────────────────────────
+    _focus_date_str = _yd_str if _sel_date == 'All days' else _sel_date
+    _focus_label    = _yesterday.strftime('%-d %b') if _sel_date == 'All days' else _sel_date
+    st.markdown(f'<div class="section-header">🏢 By BU — {_focus_label}</div>', unsafe_allow_html=True)
+
+    _focus_data = dod_raw[dod_raw['sent_date'].astype(str) == _focus_date_str].copy()
+    _prev_date  = (pd.to_datetime(_focus_date_str).date() - _td(days=1)).strftime('%Y-%m-%d')
+    _prev_data  = dod_raw[dod_raw['sent_date'].astype(str) == _prev_date].copy()
+
+    if not _focus_data.empty and 'bu' in _focus_data.columns:
+        def _bu_row_ctr(df, _bu):
+            _g = df[df['bu'] == _bu]
+            _s = _g['All_Platform_Sent'].sum()
+            return ((_g['All_Platform_Sent'] * _g['All_Platform_CTR']).sum() / _s) if _s > 0 else 0
+
+        _bu_focus = _focus_data.groupby('bu').agg(
+            campaigns=('Campaign_ID','nunique') if 'Campaign_ID' in _focus_data.columns else ('bu','count'),
+            sent=('All_Platform_Sent','sum'),
+            conversions=('primary_conversions','sum') if 'primary_conversions' in _focus_data.columns else ('bu','count'),
+        ).reset_index()
+        _bu_focus['ctr'] = _bu_focus['bu'].apply(lambda b: _bu_row_ctr(_focus_data, b))
+
+        # vs prev day arrow
+        _arrows = []
+        for _, _br in _bu_focus.iterrows():
+            _prev_ctr_bu = _bu_row_ctr(_prev_data, _br['bu']) if not _prev_data.empty else 0
+            _diff = _br['ctr'] - _prev_ctr_bu
+            _arrows.append('↑' if _diff > 0.1 else ('↓' if _diff < -0.1 else '→'))
+        _bu_focus['vs prev'] = _arrows
+        _bu_focus['ctr_fmt']  = _bu_focus['ctr'].apply(lambda x: f'{x:.2f}%')
+        _bu_focus['sent_fmt'] = _bu_focus['sent'].apply(_sfmt)
+        _bu_focus['conv_fmt'] = _bu_focus['conversions'].apply(lambda x: f'{int(x):,}')
+
+        _bu_display = _bu_focus[['bu','campaigns','sent_fmt','ctr_fmt','conv_fmt','vs prev']].rename(columns={
+            'bu':'BU','campaigns':'Campaigns','sent_fmt':'Sent',
+            'ctr_fmt':'CTR','conv_fmt':'Conversions','vs prev':'vs Prev Day',
         })
-        st.dataframe(tbl_dod, use_container_width=True, hide_index=True)
-        if len(dod) > 50:
-            st.caption(f'Showing top 50 by CTR. {len(dod)-50} more campaigns not shown.')
+        st.dataframe(_bu_display.sort_values('CTR', ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info(f'No data for {_focus_label}.')
 
-        render_insight_box('Recommended next steps', [
-            '📤 **Share this page with the team every morning** — gives a live pulse on yesterday\'s campaigns before stand-up',
-            '⚠️ **Flag low CTR campaigns immediately** — if a campaign sent to 50K+ users is below 0.5% CTR, investigate copy or targeting that day',
-            '🔄 **Set up daily automation** — run `python run_report.py --api --days 1` every morning to keep BigQuery updated without manual exports',
-        ], box_type='success')
+    # ── Section G: Campaign Table ─────────────────────────────────────────────
+    st.markdown(f'<div class="section-header">📋 Campaigns — {_focus_label}</div>', unsafe_allow_html=True)
+
+    _camp_data = _focus_data.copy()
+    if _sel_bu and len(_sel_bu) < len(_dod_bus) and 'bu' in _camp_data.columns:
+        _camp_data = _camp_data[_camp_data['bu'].isin(_sel_bu)]
+
+    if not _camp_data.empty:
+        _show_cols = [c for c in [
+            'Campaign_Name','bu','All_Platform_Sent','All_Platform_CTR',
+            'primary_conversions','tonality','is_ab_test',
+        ] if c in _camp_data.columns]
+        _tbl = _camp_data[_show_cols].sort_values('All_Platform_CTR', ascending=False).copy()
+        if 'All_Platform_CTR' in _tbl.columns:
+            _tbl['All_Platform_CTR'] = _tbl['All_Platform_CTR'].apply(lambda x: f'{float(x):.2f}%')
+        if 'All_Platform_Sent' in _tbl.columns:
+            _tbl['All_Platform_Sent'] = _tbl['All_Platform_Sent'].apply(_sfmt)
+        if 'primary_conversions' in _tbl.columns:
+            _tbl['primary_conversions'] = _tbl['primary_conversions'].apply(lambda x: f'{int(float(x)):,}')
+        if 'is_ab_test' in _tbl.columns:
+            _tbl['is_ab_test'] = _tbl['is_ab_test'].apply(lambda x: '🧪' if str(x).lower() in ('true','1') else '')
+        if 'Campaign_Name' in _tbl.columns:
+            _tbl['Campaign_Name'] = _tbl['Campaign_Name'].astype(str).str[:55]
+        _tbl = _tbl.rename(columns={
+            'Campaign_Name':'Campaign','bu':'BU',
+            'All_Platform_Sent':'Sent','All_Platform_CTR':'CTR',
+            'primary_conversions':'Conversions','tonality':'Tonality','is_ab_test':'A/B',
+        })
+        st.dataframe(_tbl, use_container_width=True, hide_index=True)
+        if len(_camp_data) > len(_tbl):
+            st.caption(f'{len(_camp_data)} campaigns total — all shown, sorted by CTR.')
+    else:
+        st.info('No campaigns match the current filters.')
+
+    # ── Recommended next steps ─────────────────────────────────────────────────
+    render_insight_box('How to use this page', [
+        '📤 **Share this page every morning** — bookmark and send to the team before stand-up for a live daily pulse.',
+        '⚠️ **Act on anomaly flags** — any day flagged in yellow dropped >20% below the month\'s average CTR. Investigate that day\'s campaign mix.',
+        '🔍 **Use the day filter** — click any specific date to drill into that day\'s campaign list and BU breakdown.',
+        '🔄 **Data refreshes automatically** — GitHub Actions runs at 6:30am IST daily. No manual action needed.',
+    ], box_type='success')

@@ -25,7 +25,7 @@ from src.top_bottom            import build_top_bottom
 from src.copy_analysis_builder import build_copy_analysis
 from src.ab_results_builder    import build_ab_results
 from src.brand_impact_builder  import build_brand_impact
-from src.bigquery_writer       import write_to_bigquery, upsert_master_enriched
+from src.bigquery_writer       import write_to_bigquery, upsert_master_enriched, upsert_dod_daily
 
 load_dotenv()
 
@@ -46,6 +46,13 @@ def main() -> None:
                         help='Pull data from MoEngage API instead of CSV file')
     parser.add_argument('--days', type=int, default=7,
                         help='Number of days to pull from API (default: 7, used with --api)')
+    parser.add_argument('--date', default=None,
+                        help='Pull a single specific date from API: "yesterday" or "YYYY-MM-DD". '
+                             'Used with --api --target dod_daily. Overrides --days.')
+    parser.add_argument('--target', default='master_enriched',
+                        choices=['master_enriched', 'dod_daily'],
+                        help='BigQuery destination table (default: master_enriched). '
+                             'Use dod_daily for the daily DOD automation job.')
     args = parser.parse_args()
 
     project_id = os.getenv('GCP_PROJECT_ID')
@@ -55,18 +62,31 @@ def main() -> None:
     print('Loading data...')
     if args.api:
         # Automated mode: pull from MoEngage API
+        from datetime import date, timedelta
         app_id      = os.getenv('MOENGAGE_APP_ID')
         secret_key  = os.getenv('MOENGAGE_SECRET_KEY')
-        data_center = os.getenv('MOENGAGE_DATA_CENTER', 'api-01')
+        data_center = os.getenv('MOENGAGE_DATA_CENTER', 'api-03')
         if not app_id or not secret_key:
             raise EnvironmentError(
                 'MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY must be set in .env for --api mode.\n'
                 'Find them at: MoEngage → Settings → APIs → Data Export'
             )
-        from src.loader import load_last_n_days_from_api
-        raw_df    = load_last_n_days_from_api(app_id, secret_key, days=args.days, data_center=data_center)
+        from src.loader import load_from_moengage_api, load_last_n_days_from_api
+
+        if args.date:
+            # Single-day pull for DOD: --date yesterday or --date 2026-07-07
+            if args.date == 'yesterday':
+                pull_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+            else:
+                pull_date = args.date
+            print(f'Pulling single day from MoEngage API: {pull_date}')
+            raw_df = load_from_moengage_api(app_id, secret_key, pull_date, pull_date, data_center)
+            print(f'   -> {len(raw_df)} campaigns loaded from MoEngage API ({pull_date})')
+        else:
+            raw_df = load_last_n_days_from_api(app_id, secret_key, days=args.days, data_center=data_center)
+            print(f'   -> {len(raw_df)} campaigns loaded from MoEngage API (last {args.days} days)')
+
         lookup_df = load_lookup_from_csv(args.lookup_path)
-        print(f'   -> {len(raw_df)} campaigns loaded from MoEngage API (last {args.days} days)')
     elif args.csv:
         # Manual mode: load from local CSV
         raw_df    = load_from_csv(args.export_path)
@@ -86,6 +106,26 @@ def main() -> None:
     print(f'   -> {len(master)} rows, {len(master.columns)} columns')
 
     # ── Upload ────────────────────────────────────────────────────────────
+    # ── DOD daily path ─────────────────────────────────────────────────────────
+    if args.target == 'dod_daily':
+        if args.no_upload or args.dry_run:
+            print(f'Skipping upload (--no-upload / --dry-run flag set). DOD master has {len(master)} rows.')
+            return
+        if not project_id or not key_path:
+            raise EnvironmentError('GCP_PROJECT_ID and GOOGLE_CLOUD_KEY_PATH must be set to upload.')
+        from datetime import date, timedelta
+        sent_date = args.date if args.date and args.date != 'yesterday' \
+            else (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+        print(f'\nWriting {len(master):,} campaigns to dod_daily (sent_date={sent_date})...')
+        upsert_dod_daily(
+            project_id=project_id,
+            key_path=key_path,
+            new_data=master,
+            sent_date=sent_date,
+        )
+        print(f'\nDone. dod_daily updated for {sent_date}.')
+        return
+
     if args.no_upload or args.dry_run:
         flag = '--dry-run' if args.dry_run else '--no-upload'
         print(f'Skipping upload ({flag} flag set)')
