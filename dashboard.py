@@ -3888,12 +3888,15 @@ elif page == '📅 Day-Over-Day (DOD)':
                     wt_cl=('All_Platform_Sent', lambda x: (x * _yd_data.loc[x.index,'All_Platform_CTR'] / 100).sum()),
                 ).reset_index()
                 _bu_yd['ctr'] = (_bu_yd['wt_cl'] / _bu_yd['sent'].replace(0, float('nan')) * 100).fillna(0)
-                _top_bu_vol = _bu_yd.sort_values('sent', ascending=False).iloc[0]
-                _top_bu_ctr = _bu_yd.sort_values('ctr', ascending=False).iloc[0]
-                _vol_pct = int(_top_bu_vol['sent'] / _yd_sent * 100) if _yd_sent else 0
-                _ins_yd.append(f'**{_top_bu_vol["bu"]}** drove **{_vol_pct}%** of yesterday\'s notifications ({_sfmt(_top_bu_vol["sent"])}).')
-                if _top_bu_ctr['bu'] != _top_bu_vol['bu']:
-                    _ins_yd.append(f'**{_top_bu_ctr["bu"]}** had the highest CTR yesterday at **{_top_bu_ctr["ctr"]:.2f}%**.')
+                # Filter out null/empty BU rows before accessing iloc
+                _bu_yd = _bu_yd[_bu_yd['bu'].notna() & (_bu_yd['bu'].astype(str).str.strip() != '')]
+                if not _bu_yd.empty:
+                    _top_bu_vol = _bu_yd.sort_values('sent', ascending=False).iloc[0]
+                    _top_bu_ctr = _bu_yd.sort_values('ctr', ascending=False).iloc[0]
+                    _vol_pct = int(_top_bu_vol['sent'] / _yd_sent * 100) if _yd_sent else 0
+                    _ins_yd.append(f'**{_top_bu_vol["bu"]}** drove **{_vol_pct}%** of yesterday\'s notifications ({_sfmt(_top_bu_vol["sent"])}).')
+                    if _top_bu_ctr['bu'] != _top_bu_vol['bu']:
+                        _ins_yd.append(f'**{_top_bu_ctr["bu"]}** had the highest CTR yesterday at **{_top_bu_ctr["ctr"]:.2f}%**.')
 
         # 3-day trend
         _last3 = _daily.tail(3)
