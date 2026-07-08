@@ -117,27 +117,39 @@ def main() -> None:
             else (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 
         # raw_df has Campaign ID + metrics from Stats API
-        # Enrich with campaign names, BU, tonality from master_enriched
+        # Step 1: fetch campaign names + tags from MoEngage Search Campaigns API
         dod_df = raw_df.copy()
-        print('\nEnriching with campaign names and BU tags from master_enriched...')
-        try:
-            from src.bq_loader import load_table as _load_table
-            _master_ref = _load_table('master_enriched')
-            if not _master_ref.empty:
-                _id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
-                _keep   = [c for c in ['Campaign_Name','bu','tonality','copy_type','Campaign_Sent_Time']
-                           if c in _master_ref.columns]
-                _ref = _master_ref[[_id_col] + _keep].drop_duplicates(subset=[_id_col], keep='last')
-                _ref = _ref.rename(columns={
-                    _id_col:              'Campaign ID',
-                    'Campaign_Name':      'Campaign Name',
-                    'Campaign_Sent_Time': 'Campaign Sent Time',
-                })
-                dod_df = dod_df.merge(_ref, on='Campaign ID', how='left')
-                _matched = dod_df['bu'].notna().sum() if 'bu' in dod_df.columns else 0
-                print(f'   -> {_matched:,}/{len(dod_df):,} campaigns matched with names/BU from master_enriched')
-        except Exception as _e:
-            print(f'   -> Could not enrich from master_enriched: {_e}')
+        print('\nFetching campaign names from MoEngage Search Campaigns API...')
+        from src.loader import fetch_campaign_metadata
+        _meta = fetch_campaign_metadata(
+            campaign_ids=dod_df['Campaign ID'].tolist(),
+            app_id=app_id, secret_key=secret_key, data_center=data_center,
+        )
+        if _meta:
+            dod_df['Campaign Name']     = dod_df['Campaign ID'].map(
+                lambda x: _meta.get(x, {}).get('name', ''))
+            dod_df['Campaign Sent Time'] = dod_df['Campaign ID'].map(
+                lambda x: _meta.get(x, {}).get('sent_time', ''))
+            _tags_map = {k: v.get('tags', []) for k, v in _meta.items()}
+        else:
+            _tags_map = {}
+
+        # Step 2: detect BU from campaign name using existing config logic
+        from config import TAG_VALUE_TO_BU, CAMPAIGN_NAME_BU_MAP
+        def _detect_bu(row):
+            name_upper = str(row.get('Campaign Name', '')).upper()
+            # Check tags first (from Search API basic_details.tags)
+            for tag in _tags_map.get(row.get('Campaign ID', ''), []):
+                if tag in TAG_VALUE_TO_BU:
+                    return TAG_VALUE_TO_BU[tag]
+            # Fall back to campaign name prefix
+            for prefix, bu in CAMPAIGN_NAME_BU_MAP.items():
+                if name_upper.startswith(prefix):
+                    return bu
+            return 'Other'
+        dod_df['bu'] = dod_df.apply(_detect_bu, axis=1)
+        _bu_counts = dod_df['bu'].value_counts().to_dict()
+        print(f'   -> BU distribution: {_bu_counts}')
 
         print(f'\nWriting {len(dod_df):,} campaigns to dod_daily (sent_date={sent_date})...')
         upsert_dod_daily(project_id=project_id, key_path=key_path,

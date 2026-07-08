@@ -66,14 +66,16 @@ TAG_VALUE_TO_BU = {
     'POPchop_mandate_done':      'POPchop',  # consolidated
     'POPchop_mandate_not_done':  'POPchop',  # consolidated
     # From Tag Category: Uncategorized
-    'UPI':     'UPI',
-    'RCBP':    'RCBP',
+    'UPI':      'UPI',
+    'RCBP':     'RCBP',
+    'Referral': 'Referral',   # Tag value — update if MoEngage uses a different value
 }
 
 ALL_BUS = [
     'UPI - Acquisition', 'UPI - Retention', 'RCBP', 'Shop', 'POPchop',
     'POPcard - Acquisition', 'POPcard - Activation',
     'Rupay - Activation', 'Rupay - Acquisition',
+    'Referral',
 ]
 
 # Tag columns to scan (all 4 MoEngage tag categories)
@@ -92,6 +94,7 @@ CAMPAIGN_NAME_BU_MAP = {
     'SHOP':     'Shop',
     'POPCHOP':  'POPchop',
     'CHOP':     'POPchop',
+    'REFERRAL': 'Referral',   # Update prefix if campaign names use a different pattern
     # CREDIT is ambiguous (could be POPcard Acquisition or Activation)
     # — resolved via deeplink in bu_tagger.py
 }

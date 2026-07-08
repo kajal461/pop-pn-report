@@ -282,3 +282,70 @@ def load_last_n_days_from_api(
     date_to   = date.today().strftime('%Y-%m-%d')
     date_from = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
     return load_from_moengage_api(app_id, secret_key, date_from, date_to, data_center)
+
+
+def fetch_campaign_metadata(
+    campaign_ids: list,
+    app_id: str,
+    secret_key: str,
+    data_center: str = 'api-03',
+) -> dict:
+    """
+    Fetch campaign names, tags and sent_time for a list of campaign IDs
+    using the MoEngage Search Campaigns API.
+
+    Endpoint: POST https://api-{dc}.moengage.com/core-services/v1/campaigns/search
+    Rate limit: 10 req/sec, 100 req/min
+
+    Returns:
+        { campaign_id: {'name': str, 'tags': list, 'sent_time': str} }
+    """
+    import requests
+    import base64
+    import uuid
+    import time
+
+    if not campaign_ids:
+        return {}
+
+    credentials = base64.b64encode(f'{app_id}:{secret_key}'.encode()).decode()
+    endpoint    = f'https://{data_center}.moengage.com/core-services/v1/campaigns/search'
+    headers     = {
+        'Authorization': f'Basic {credentials}',
+        'MOE-APPKEY':    app_id,
+        'Content-Type':  'application/json',
+    }
+
+    metadata = {}
+    for i, campaign_id in enumerate(campaign_ids):
+        # Respect 10 req/sec rate limit
+        if i > 0 and i % 9 == 0:
+            time.sleep(1)
+
+        payload = {
+            'request_id':     str(uuid.uuid4()),
+            'campaign_fields': {
+                'channels': ['PUSH'],
+                'id':        campaign_id,
+            },
+            'limit': 1,
+            'page':  1,
+        }
+        try:
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=10)
+            resp.raise_for_status()
+            results = resp.json()
+            if results and isinstance(results, list):
+                c = results[0]
+                bd = c.get('basic_details', {}) or {}
+                metadata[campaign_id] = {
+                    'name':      bd.get('name', ''),
+                    'tags':      bd.get('tags', []) or [],
+                    'sent_time': c.get('sent_time', '') or '',
+                }
+        except Exception:
+            pass  # Leave metadata blank — campaign shows with ID only
+
+    matched = sum(1 for v in metadata.values() if v.get('name'))
+    print(f'  Campaign metadata: {matched}/{len(campaign_ids)} names fetched from Search API')
+    return metadata
