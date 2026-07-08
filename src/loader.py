@@ -323,9 +323,10 @@ def fetch_campaign_metadata(
             time.sleep(1)
 
         payload = {
-            'request_id':              str(uuid.uuid4()),
-            'campaign_fields':         {'id': campaign_id},  # no channel filter — catch all types
-            'include_archive_campaigns': True,               # include archived/stopped campaigns
+            'request_id':                str(uuid.uuid4()),
+            'campaign_fields':           {'id': campaign_id},
+            'include_archive_campaigns': True,
+            'include_child_campaigns':   True,
             'limit': 1,
             'page':  1,
         }
@@ -334,15 +335,51 @@ def fetch_campaign_metadata(
             resp.raise_for_status()
             results = resp.json()
             if results and isinstance(results, list):
-                c = results[0]
+                c  = results[0]
                 bd = c.get('basic_details', {}) or {}
                 metadata[campaign_id] = {
+                    'name':             bd.get('name', ''),
+                    'tags':             bd.get('tags', []) or [],
+                    'sent_time':        c.get('sent_time', '') or '',
+                    'parent_id':        c.get('parent_id', '') or '',
+                }
+        except Exception:
+            pass  # Leave metadata blank — campaign shows with ID only
+
+    # Second pass: for campaigns with no name, try looking up via parent_campaign_id
+    # (child/variation campaigns may not be directly searchable)
+    _missing = [cid for cid, v in metadata.items() if not v.get('name')]
+    _parent_ids = list({v.get('parent_id') for v in metadata.values()
+                        if v.get('parent_id') and not metadata.get(v['parent_id'], {}).get('name')})
+    for parent_id in _parent_ids[:20]:   # cap at 20 parent lookups
+        if i > 0 and i % 9 == 0:
+            time.sleep(1)
+        payload = {
+            'request_id':                str(uuid.uuid4()),
+            'campaign_fields':           {'id': parent_id},
+            'include_archive_campaigns': True,
+            'include_child_campaigns':   True,
+            'limit': 1,
+            'page':  1,
+        }
+        try:
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=10)
+            resp.raise_for_status()
+            results = resp.json()
+            if results and isinstance(results, list):
+                c  = results[0]
+                bd = c.get('basic_details', {}) or {}
+                parent_meta = {
                     'name':      bd.get('name', ''),
                     'tags':      bd.get('tags', []) or [],
                     'sent_time': c.get('sent_time', '') or '',
                 }
+                # Apply parent metadata to all child campaigns with this parent
+                for cid, v in metadata.items():
+                    if v.get('parent_id') == parent_id and not v.get('name'):
+                        metadata[cid].update(parent_meta)
         except Exception:
-            pass  # Leave metadata blank — campaign shows with ID only
+            pass
 
     matched = sum(1 for v in metadata.values() if v.get('name'))
     print(f'  Campaign metadata: {matched}/{len(campaign_ids)} names fetched from Search API')
