@@ -105,16 +105,10 @@ def main() -> None:
         print('  No campaigns returned. Nothing to write — skipping.')
         return
 
-    # ── Enrich ────────────────────────────────────────────────────────────
-    print('Building master enriched table...')
-    master = build_master(raw_df, lookup_df)
-    print(f'   -> {len(master)} rows, {len(master.columns)} columns')
-
-    # ── Upload ────────────────────────────────────────────────────────────
-    # ── DOD daily path ─────────────────────────────────────────────────────────
+    # ── DOD daily path (skip build_master — Stats API gives metrics directly) ──
     if args.target == 'dod_daily':
         if args.no_upload or args.dry_run:
-            print(f'Skipping upload (--no-upload / --dry-run). DOD master has {len(master)} rows.')
+            print(f'Skipping upload (--no-upload / --dry-run). {len(raw_df)} campaigns from API.')
             return
         if not project_id or not key_path:
             raise EnvironmentError('GCP_PROJECT_ID and GOOGLE_CLOUD_KEY_PATH must be set to upload.')
@@ -122,41 +116,39 @@ def main() -> None:
         sent_date = args.date if args.date and args.date != 'yesterday' \
             else (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 
-        # Enrich with campaign names and BU tags from master_enriched
-        # Stats API only returns metrics — names/BU live in master_enriched
+        # raw_df has Campaign ID + metrics from Stats API
+        # Enrich with campaign names, BU, tonality from master_enriched
+        dod_df = raw_df.copy()
         print('\nEnriching with campaign names and BU tags from master_enriched...')
         try:
             from src.bq_loader import load_table as _load_table
             _master_ref = _load_table('master_enriched')
             if not _master_ref.empty:
-                _camp_id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
-                _ref = _master_ref[[_camp_id_col, 'Campaign_Name', 'bu', 'tonality',
-                                     'Campaign_Sent_Time', 'copy_type']].copy()
+                _id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
+                _keep   = [c for c in ['Campaign_Name','bu','tonality','copy_type','Campaign_Sent_Time']
+                           if c in _master_ref.columns]
+                _ref = _master_ref[[_id_col] + _keep].drop_duplicates(subset=[_id_col], keep='last')
                 _ref = _ref.rename(columns={
-                    _camp_id_col: 'Campaign ID',
-                    'Campaign_Name': 'Campaign Name',
+                    _id_col:              'Campaign ID',
+                    'Campaign_Name':      'Campaign Name',
                     'Campaign_Sent_Time': 'Campaign Sent Time',
-                }).drop_duplicates(subset=['Campaign ID'], keep='last')
-                master = master.merge(_ref, on='Campaign ID', how='left', suffixes=('', '_ref'))
-                for col in ['Campaign Name', 'Campaign Sent Time']:
-                    if col + '_ref' in master.columns:
-                        master[col] = master[col + '_ref'].fillna(master.get(col, ''))
-                        master.drop(columns=[col + '_ref'], inplace=True)
-                    elif col not in master.columns:
-                        master[col] = ''
-                print(f'   -> Enriched {(master["Campaign Name"] != "").sum():,}/{len(master):,} campaigns with names from master_enriched')
+                })
+                dod_df = dod_df.merge(_ref, on='Campaign ID', how='left')
+                _matched = dod_df['bu'].notna().sum() if 'bu' in dod_df.columns else 0
+                print(f'   -> {_matched:,}/{len(dod_df):,} campaigns matched with names/BU from master_enriched')
         except Exception as _e:
-            print(f'   -> Could not enrich from master_enriched: {_e}. Proceeding with campaign IDs only.')
+            print(f'   -> Could not enrich from master_enriched: {_e}')
 
-        print(f'\nWriting {len(master):,} campaigns to dod_daily (sent_date={sent_date})...')
-        upsert_dod_daily(
-            project_id=project_id,
-            key_path=key_path,
-            new_data=master,
-            sent_date=sent_date,
-        )
-        print(f'\nDone. dod_daily updated for {sent_date}.')
+        print(f'\nWriting {len(dod_df):,} campaigns to dod_daily (sent_date={sent_date})...')
+        upsert_dod_daily(project_id=project_id, key_path=key_path,
+                         new_data=dod_df, sent_date=sent_date)
+        print(f'\nDone. dod_daily updated for {sent_date} with {len(dod_df):,} campaigns.')
         return
+
+    # ── Full pipeline path (CSV / Sheets — not DOD) ───────────────────────
+    print('Building master enriched table...')
+    master = build_master(raw_df, lookup_df)
+    print(f'   -> {len(master)} rows, {len(master.columns)} columns')
 
     if args.no_upload or args.dry_run:
         flag = '--dry-run' if args.dry_run else '--no-upload'
