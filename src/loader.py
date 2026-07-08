@@ -213,10 +213,11 @@ def load_from_moengage_api(
     }
 
     all_campaigns = []
-    offset = 0
-    limit  = 10   # MoEngage Stats API max per request
+    offset        = 0
+    limit         = 10    # MoEngage Stats API max per request
+    max_pages     = 50    # hard safety cap — 50 × 10 = 500 campaigns max
 
-    while True:
+    for _page_num in range(max_pages):
         payload = {
             'request_id':       str(uuid.uuid4()),
             'start_date':       date_from,
@@ -235,20 +236,23 @@ def load_from_moengage_api(
             if status == 401:
                 raise ValueError(
                     'MoEngage API authentication failed. '
-                    'Check MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY. '
-                    'Find them at: MoEngage → Settings → APIs'
+                    'Check MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY.'
                 )
             raise
 
         page_campaigns = _parse_campaigns_from_response(data)
+        print(f'  Page {_page_num + 1}: {len(page_campaigns)} campaigns (offset={offset})')
+
         if not page_campaigns:
             break
 
         all_campaigns.extend(page_campaigns)
 
-        total_pages  = int(data.get('total_pages', 1) or 1)
-        current_page = int(data.get('current_page', 1) or 1)
-        if current_page >= total_pages:
+        total_campaigns = int(data.get('total_campaigns', 0) or 0)
+        # Stop when we have all campaigns or got a partial page
+        if total_campaigns > 0 and len(all_campaigns) >= total_campaigns:
+            break
+        if len(page_campaigns) < limit:
             break
 
         offset += limit
