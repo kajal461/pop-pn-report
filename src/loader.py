@@ -59,45 +59,120 @@ def load_from_sheets(
     return raw_df, lookup_df
 
 
-def _normalize_stats_response(campaigns_raw: list) -> pd.DataFrame:
+def _parse_campaigns_from_response(data: dict) -> list:
     """
-    Map MoEngage Campaign Stats API response fields to MoEngage CSV column names
-    so the existing build_master() pipeline can process them unchanged.
+    Extract campaign list from MoEngage Stats API response.
 
-    Stats API response shape per campaign:
-      { campaign_id, campaign_name, performance_stats: {sent, click, impression,
-        ctr, delivery_rate, ...}, conversion_goal_stats: {GoalName: {conversions}} }
+    Actual response structure (confirmed from live API):
+      {
+        "total_campaigns": N,
+        "current_page": N,
+        "total_pages": N,
+        "response_id": "...",
+        "data": {
+          "<campaign_id>": [   ← list of platform/variation breakdowns
+            { "performance_stats": {...}, "conversion_goal_stats": {...}, ... },
+            ...
+          ]
+        }
+      }
 
-    Ref: https://moengage.com/docs/api/stats/get-campaign-stats.md
+    Aggregates all platform/variation entries into one row per campaign_id.
+    """
+    raw_data = data.get('data', {})
+    if not raw_data or not isinstance(raw_data, dict):
+        return []
+
+    campaigns = []
+    for campaign_id, items in raw_data.items():
+
+        # Ensure items is always a list
+        if isinstance(items, dict):
+            items = [items]
+        elif not isinstance(items, list):
+            continue
+
+        # Aggregate all platform/variation items into one row
+        total_sent = 0
+        total_clicks = 0
+        total_impressions = 0
+        total_failed = 0
+        total_conv = 0
+        delivery_rate_weighted = 0.0
+        campaign_name = ''
+        campaign_type = 'Push Notification'
+        sent_time = ''
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            # Metadata: take first non-empty value
+            if not campaign_name:
+                campaign_name = (item.get('campaign_name') or
+                                 item.get('name') or '')
+            if not campaign_type or campaign_type == 'Push Notification':
+                campaign_type = item.get('campaign_type', 'Push Notification') or 'Push Notification'
+            if not sent_time:
+                sent_time = item.get('sent_time') or item.get('created_at') or ''
+
+            ps  = item.get('performance_stats', {}) or {}
+            cgs = item.get('conversion_goal_stats', {}) or {}
+
+            sent   = float(ps.get('sent', 0) or 0)
+            clicks = float(ps.get('click', 0) or 0)
+            total_sent        += sent
+            total_clicks      += clicks
+            total_impressions += float(ps.get('impression', 0) or 0)
+            total_failed      += float(ps.get('failed', 0) or 0)
+            delivery_rate_weighted += sent * float(ps.get('delivery_rate', 0) or 0)
+
+            # Sum conversions across all goals
+            for goal_data in cgs.values():
+                if isinstance(goal_data, dict):
+                    total_conv += float(goal_data.get('conversions', 0) or 0)
+
+        # Derived metrics
+        ctr = (total_clicks / total_sent * 100) if total_sent > 0 else 0.0
+        delivery_rate = (delivery_rate_weighted / total_sent) if total_sent > 0 else 0.0
+
+        campaigns.append({
+            'campaign_id':    campaign_id,
+            'campaign_name':  campaign_name,
+            'campaign_type':  campaign_type,
+            'sent_time':      sent_time,
+            'sent':           total_sent,
+            'clicks':         total_clicks,
+            'impressions':    total_impressions,
+            'failed':         total_failed,
+            'ctr':            round(ctr, 4),
+            'delivery_rate':  round(delivery_rate, 4),
+            'conversions':    total_conv,
+        })
+
+    return campaigns
+
+
+def _to_dataframe(campaigns: list) -> pd.DataFrame:
+    """
+    Map aggregated campaign dicts to MoEngage CSV column names
+    so build_master() pipeline works unchanged.
     """
     rows = []
-    for c in campaigns_raw:
-        ps   = c.get('performance_stats', {})
-        cgs  = c.get('conversion_goal_stats', {})
-
-        # Sum conversions across all goals
-        total_conv = sum(
-            g.get('conversions', 0) for g in cgs.values() if isinstance(g, dict)
-        )
-
-        row = {
-            'Campaign ID':             c.get('campaign_id', ''),
-            'Campaign Name':           c.get('campaign_name', ''),
-            'Campaign Type':           c.get('campaign_type', 'Push Notification'),
-            'Campaign Sent Time':      c.get('sent_time', ''),
-            # Platform metrics → match MoEngage CSV column names exactly
-            'All Platform Sent':       ps.get('sent', 0),
-            'All Platform Impressions':ps.get('impression', 0),
-            'All Platform Clicks':     ps.get('click', 0),
-            'All Platform CTR':        ps.get('ctr', 0),           # already in %
-            'All Platform Failed':     ps.get('failed', 0),
-            'All Platform FCM Delivery Rate': ps.get('delivery_rate', 0),
-            'All Platform Sent Rate':  ps.get('sent_rate', 0),
-            # Conversions
-            'Goal 1 Click Through Converted Users All Platform': total_conv,
-        }
-        rows.append(row)
-
+    for c in campaigns:
+        rows.append({
+            'Campaign ID':       c['campaign_id'],
+            'Campaign Name':     c['campaign_name'],
+            'Campaign Type':     c['campaign_type'],
+            'Campaign Sent Time': c['sent_time'],
+            'All Platform Sent':        c['sent'],
+            'All Platform Impressions': c['impressions'],
+            'All Platform Clicks':      c['clicks'],
+            'All Platform CTR':         c['ctr'],
+            'All Platform Failed':      c['failed'],
+            'All Platform FCM Delivery Rate': c['delivery_rate'],
+            'Goal 1 Click Through Converted Users All Platform': c['conversions'],
+        })
     return pd.DataFrame(rows)
 
 
@@ -165,30 +240,15 @@ def load_from_moengage_api(
                 )
             raise
 
-        # data['data'] is a dict keyed by campaign_id → values are campaign objects
-        # e.g. {"69ce1ce2...": {performance_stats: {...}, ...}, ...}
-        raw_data = data.get('data', {})
-        if isinstance(raw_data, dict) and raw_data:
-            # Inject campaign_id as a field on each object
-            campaigns = [{'campaign_id': k, **v} for k, v in raw_data.items()]
-        elif isinstance(raw_data, list):
-            campaigns = raw_data
-        else:
-            campaigns = []
-
-        if not campaigns:
+        page_campaigns = _parse_campaigns_from_response(data)
+        if not page_campaigns:
             break
 
-        # Debug: show first campaign's keys so we can verify field names
-        if campaigns and not all_campaigns:
-            print(f'  First campaign keys: {list(campaigns[0].keys())}')
+        all_campaigns.extend(page_campaigns)
 
-        all_campaigns.extend(campaigns)
-
-        total_campaigns = data.get('total_campaigns', 0)
-        total_pages     = data.get('total_pages', 1)
-        current_page    = data.get('current_page', 1)
-        if current_page >= total_pages or len(all_campaigns) >= total_campaigns:
+        total_pages  = int(data.get('total_pages', 1) or 1)
+        current_page = int(data.get('current_page', 1) or 1)
+        if current_page >= total_pages:
             break
 
         offset += limit
@@ -197,11 +257,11 @@ def load_from_moengage_api(
         print(f'  MoEngage API returned 0 campaigns for {date_from} to {date_to}')
         return pd.DataFrame()
 
-    df = _normalize_stats_response(all_campaigns)
+    df = _to_dataframe(all_campaigns)
 
-    # Filter out zero-sent rows (same as CSV loader)
-    df[COL_ALL_SENT] = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
-    df = df[df[COL_ALL_SENT] > 0].reset_index(drop=True)
+    # Filter zero-sent rows (same as CSV loader)
+    df['All Platform Sent'] = pd.to_numeric(df['All Platform Sent'], errors='coerce').fillna(0)
+    df = df[df['All Platform Sent'] > 0].reset_index(drop=True)
 
     print(f'  MoEngage API: {len(df)} campaigns loaded ({date_from} → {date_to})')
     return df
