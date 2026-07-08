@@ -117,46 +117,68 @@ def main() -> None:
             else (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 
         # raw_df has Campaign ID + metrics from Stats API
-        # Step 1: fetch campaign names + tags from MoEngage Search Campaigns API
         dod_df = raw_df.copy()
-        print('\nFetching campaign names from MoEngage Search Campaigns API...')
-        from src.loader import fetch_campaign_metadata
-        _meta = fetch_campaign_metadata(
-            campaign_ids=dod_df['Campaign ID'].tolist(),
-            app_id=app_id, secret_key=secret_key, data_center=data_center,
-        )
-        if _meta:
-            dod_df['Campaign Name']     = dod_df['Campaign ID'].map(
-                lambda x: _meta.get(x, {}).get('name', ''))
-            dod_df['Campaign Sent Time'] = dod_df['Campaign ID'].map(
-                lambda x: _meta.get(x, {}).get('sent_time', ''))
+        from config import TAG_VALUE_TO_BU, CAMPAIGN_NAME_BU_MAP
+
+        # ── Step 1: Enrich from master_enriched (best source — has Tag Category BU tags) ──
+        print('\nEnriching from master_enriched...')
+        try:
+            from src.bq_loader import load_table as _load_table
+            _master_ref = _load_table('master_enriched')
+            if not _master_ref.empty:
+                _id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
+                _keep = [c for c in ['Campaign_Name','bu','Campaign_Sent_Time'] if c in _master_ref.columns]
+                _ref  = (_master_ref[[_id_col]+_keep]
+                         .drop_duplicates(subset=[_id_col], keep='last')
+                         .rename(columns={_id_col:'Campaign ID',
+                                          'Campaign_Name':'Campaign Name',
+                                          'Campaign_Sent_Time':'Campaign Sent Time'}))
+                dod_df = dod_df.merge(_ref, on='Campaign ID', how='left')
+                _matched = dod_df['bu'].notna().sum() if 'bu' in dod_df.columns else 0
+                print(f'   -> {_matched}/{len(dod_df)} campaigns resolved from master_enriched')
+        except Exception as _e:
+            print(f'   -> master_enriched lookup failed: {_e}')
+
+        # ── Step 2: Search API for campaigns still missing name/BU ──────────────
+        _need_name = dod_df['Campaign Name'].isna() | (dod_df['Campaign Name'] == '')
+        _ids_to_search = dod_df[_need_name]['Campaign ID'].tolist()
+        if _ids_to_search:
+            print(f'\nFetching {len(_ids_to_search)} remaining names from MoEngage Search API...')
+            from src.loader import fetch_campaign_metadata
+            _meta = fetch_campaign_metadata(
+                campaign_ids=_ids_to_search,
+                app_id=app_id, secret_key=secret_key, data_center=data_center,
+            )
             _tags_map = {k: v.get('tags', []) for k, v in _meta.items()}
+            for cid, mv in _meta.items():
+                if mv.get('name'):
+                    dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Name']     = mv['name']
+                    dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Sent Time'] = mv.get('sent_time','')
         else:
             _tags_map = {}
 
-        # Step 2: detect BU from campaign name using existing config logic
-        from config import TAG_VALUE_TO_BU, CAMPAIGN_NAME_BU_MAP
+        # ── Step 3: BU detection — name prefix for anything still missing BU ──
         def _detect_bu(row):
+            # Already have BU from master_enriched
+            existing_bu = row.get('bu', '')
+            if existing_bu and str(existing_bu) not in ('', 'nan', 'None'):
+                return existing_bu
             name_upper = str(row.get('Campaign Name', '')).upper()
-            # Check tags first (from Search API basic_details.tags)
+            # Tags from Search API
             for tag in _tags_map.get(row.get('Campaign ID', ''), []):
                 if tag in TAG_VALUE_TO_BU:
                     return TAG_VALUE_TO_BU[tag]
-            # Fall back to campaign name prefix
+            # Campaign name prefix
             for prefix, bu in CAMPAIGN_NAME_BU_MAP.items():
                 if name_upper.startswith(prefix):
                     return bu
             return 'Other'
+
+        if 'bu' not in dod_df.columns:
+            dod_df['bu'] = ''
         dod_df['bu'] = dod_df.apply(_detect_bu, axis=1)
         _bu_counts = dod_df['bu'].value_counts().to_dict()
         print(f'   -> BU distribution: {_bu_counts}')
-        # Debug: show tags + names of first 10 "Other" campaigns
-        _other = dod_df[dod_df['bu'] == 'Other'].head(10)
-        for _, _r in _other.iterrows():
-            _cid  = _r.get('Campaign ID', '')
-            _tags = _tags_map.get(_cid, [])
-            _name = _r.get('Campaign Name', '')
-            print(f'  Other: id={_cid} | name="{_name}" | tags={_tags}')
 
         print(f'\nWriting {len(dod_df):,} campaigns to dod_daily (sent_date={sent_date})...')
         upsert_dod_daily(project_id=project_id, key_path=key_path,
