@@ -133,6 +133,9 @@ def main() -> None:
                          .rename(columns={_id_col:'Campaign ID',
                                           'Campaign_Name':'Campaign Name',
                                           'Campaign_Sent_Time':'Campaign Sent Time'}))
+                # Drop overlapping cols from dod_df before merge to avoid _x/_y conflicts
+                _overlap = [c for c in _ref.columns if c in dod_df.columns and c != 'Campaign ID']
+                dod_df = dod_df.drop(columns=_overlap, errors='ignore')
                 dod_df = dod_df.merge(_ref, on='Campaign ID', how='left')
                 _matched = dod_df['bu'].notna().sum() if 'bu' in dod_df.columns else 0
                 print(f'   -> {_matched}/{len(dod_df)} campaigns resolved from master_enriched')
