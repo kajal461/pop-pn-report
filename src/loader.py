@@ -201,6 +201,7 @@ def load_from_moengage_api(
     import requests
     import base64
     import uuid
+    import time
 
     credentials = base64.b64encode(f'{app_id}:{secret_key}'.encode()).decode()
     endpoint    = f'https://{data_center}.moengage.com/core-services/v1/campaign-stats'
@@ -225,18 +226,28 @@ def load_from_moengage_api(
             'offset':           offset,
             'limit':            limit,
         }
-        try:
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response is not None else 0
-            if status == 401:
-                raise ValueError(
-                    'MoEngage API authentication failed. '
-                    'Check MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY.'
-                )
-            raise
+        # Retry up to 3 times on timeout/connection errors
+        data = None
+        for _attempt in range(3):
+            try:
+                resp = requests.post(endpoint, headers=headers, json=payload, timeout=90)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except requests.exceptions.Timeout:
+                print(f'  Page {_page_num+1} attempt {_attempt+1}/3 timed out — retrying...')
+                time.sleep(5 * (_attempt + 1))
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status == 401:
+                    raise ValueError(
+                        'MoEngage API authentication failed. '
+                        'Check MOENGAGE_APP_ID and MOENGAGE_SECRET_KEY.'
+                    )
+                raise
+        if data is None:
+            print(f'  Page {_page_num+1} failed after 3 retries — stopping pagination')
+            break
 
         # Count raw campaigns in this page (before sent>0 filter) for pagination
         raw_count = len(data.get('data', {})) if isinstance(data.get('data'), dict) else 0
@@ -331,7 +342,7 @@ def fetch_campaign_metadata(
             'page':  1,
         }
         try:
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=10)
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
             resp.raise_for_status()
             results = resp.json()
             if results and isinstance(results, list):
