@@ -57,6 +57,7 @@ TAG_VALUE_TO_BU = {
     # From Tag Category: POPcard
     'POPcard_apply_now': 'POPcard - Acquisition',
     'POPcard_txn':       'POPcard - Activation',
+    'referral':          'Referral',   # confirmed from CSV: Tag Category: POPcard = ['referral']
     # From Tag Category: Rupay
     'Rupay_txn':         'Rupay - Activation',
     'Rupay_linking':     'Rupay - Acquisition',
@@ -66,9 +67,8 @@ TAG_VALUE_TO_BU = {
     'POPchop_mandate_done':      'POPchop',  # consolidated
     'POPchop_mandate_not_done':  'POPchop',  # consolidated
     # From Tag Category: Uncategorized
-    'UPI':      'UPI',
-    'RCBP':     'RCBP',
-    'Referral': 'Referral',   # Tag value — update if MoEngage uses a different value
+    'UPI':  'UPI',
+    'RCBP': 'RCBP',
 }
 
 ALL_BUS = [
