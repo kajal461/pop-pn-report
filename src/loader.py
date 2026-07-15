@@ -130,6 +130,11 @@ def _parse_campaigns_from_response(data: dict) -> list:
             continue
 
         ctr = (clicks / sent * 100) if sent > 0 else 0.0
+
+        # Debug: print full cgs structure for the first active campaign
+        if not campaigns and cgs:
+            print(f'  [DEBUG] conversion_goal_stats sample: {dict(list(cgs.items())[:2])}')
+
         total_conv = sum(
             float(g.get('conversions', 0) or 0)
             for g in cgs.values() if isinstance(g, dict)
