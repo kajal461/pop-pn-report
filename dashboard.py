@@ -3666,80 +3666,101 @@ elif page == '🧪 Control Group Analysis':
 
     # ── CG Performance — campaigns that actually used CG ─────────────────────
     st.markdown('<div class="section-header">📋 Campaigns With Control Group — Performance</div>', unsafe_allow_html=True)
-    st.caption('These are your measured campaigns. CTR and conversions reflect the treatment group (users who received the PN).')
 
     cg_campaigns = m[m['has_cg']].copy()
+    no_cg        = m[~m['has_cg']].copy()
+    _sfmt_cg     = lambda v: f'{float(v)/1e6:.1f}M' if float(v)>=1e6 else (f'{float(v)/1000:.0f}K' if float(v)>=1000 else f'{float(v):,.0f}')
+
     if not cg_campaigns.empty:
-        _sfmt_cg = lambda v: f'{float(v)/1e6:.1f}M' if float(v)>=1e6 else (f'{float(v)/1000:.0f}K' if float(v)>=1000 else f'{float(v):,.0f}')
-        cg_campaigns['cg_pct_fmt'] = cg_campaigns['cg_pct'].apply(lambda x: f'{x:.0f}%')
+        # Compute highlights before table
+        _avg_cg_pct   = cg_campaigns['cg_pct'].mean()
+        _total_cg_u   = int(cg_campaigns['cg_size'].sum())
+        _best_ctr_row = cg_campaigns.loc[cg_campaigns['All_Platform_CTR'].idxmax()]
+        _best_ctr_nm  = str(_best_ctr_row.get('Campaign_Name',''))[:40]
+        _cg_conv_tot  = cg_campaigns['primary_conversions'].sum() if 'primary_conversions' in cg_campaigns.columns else 0
+        _no_cg_conv   = no_cg['primary_conversions'].sum() if 'primary_conversions' in no_cg.columns else 0
+        _cg_avg_ctr   = (cg_campaigns['All_Platform_Sent'] * cg_campaigns['All_Platform_CTR']).sum() / cg_campaigns['All_Platform_Sent'].sum() if cg_campaigns['All_Platform_Sent'].sum() > 0 else 0
+        _no_cg_avg_ctr= (no_cg['All_Platform_Sent'] * no_cg['All_Platform_CTR']).sum() / no_cg['All_Platform_Sent'].sum() if not no_cg.empty and no_cg['All_Platform_Sent'].sum() > 0 else 0
+        _ctr_diff     = _cg_avg_ctr - _no_cg_avg_ctr
+
+        # Contextual callout before the table
+        st.markdown(f"""
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 18px;margin:8px 0 12px 0">
+            <div style="font-size:13px;color:#1e40af">
+            These <strong>{cg_count:,} campaigns</strong> withheld <strong>{_total_cg_u:,} users</strong> from receiving the PN (avg <strong>{_avg_cg_pct:.0f}% holdout</strong>) to serve as a control.
+            Their CTR (<strong>{_cg_avg_ctr:.2f}%</strong>) is <strong>{"+" if _ctr_diff>=0 else ""}{_ctr_diff:.2f}pp {"higher" if _ctr_diff>=0 else "lower"}</strong> than unmeasured campaigns ({_no_cg_avg_ctr:.2f}%).
+            Best performer: <strong>"{_best_ctr_nm}"</strong> at <strong>{float(_best_ctr_row["All_Platform_CTR"]):.2f}% CTR</strong>.
+            Total verified conversions from measured campaigns: <strong>{int(_cg_conv_tot):,}</strong> vs <strong>{int(_no_cg_conv):,}</strong> unverified.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        cg_campaigns['cg_pct_fmt']  = cg_campaigns['cg_pct'].apply(lambda x: f'{x:.0f}%')
         cg_campaigns['cg_size_fmt'] = cg_campaigns['cg_size'].apply(_sfmt_cg)
         cg_campaigns['sent_fmt']    = cg_campaigns['All_Platform_Sent'].apply(_sfmt_cg)
         cg_campaigns['ctr_fmt']     = cg_campaigns['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%')
-        cg_campaigns['conv_fmt']    = cg_campaigns['primary_conversions'].apply(lambda x: f'{int(x):,}' if 'primary_conversions' in cg_campaigns.columns else '—')
+        cg_campaigns['conv_fmt']    = cg_campaigns['primary_conversions'].apply(lambda x: f'{int(x):,}') if 'primary_conversions' in cg_campaigns.columns else '—'
         cg_campaigns['cvr_fmt']     = cg_campaigns.apply(
-            lambda r: f"{r['primary_conversions']/r['All_Platform_Sent']*100:.2f}%" if r['All_Platform_Sent'] > 0 and 'primary_conversions' in cg_campaigns.columns else '—', axis=1
-        )
+            lambda r: f"{r['primary_conversions']/r['All_Platform_Sent']*100:.2f}%" if r['All_Platform_Sent']>0 and 'primary_conversions' in cg_campaigns.columns else '—', axis=1)
 
-        show_cg_cols = [c for c in ['Campaign_Name','bu','sent_fmt','ctr_fmt','conv_fmt','cvr_fmt','cg_size_fmt','cg_pct_fmt','sent_month'] if c in cg_campaigns.columns or c in ['sent_fmt','ctr_fmt','conv_fmt','cvr_fmt','cg_size_fmt','cg_pct_fmt']]
-        cg_display = cg_campaigns[['Campaign_Name','bu','sent_fmt','ctr_fmt','conv_fmt','cvr_fmt','cg_size_fmt','cg_pct_fmt']].copy()
-        cg_display = cg_display.rename(columns={
+        cg_display = cg_campaigns[['Campaign_Name','bu','sent_fmt','ctr_fmt','conv_fmt','cvr_fmt','cg_size_fmt','cg_pct_fmt']].rename(columns={
             'Campaign_Name':'Campaign','bu':'BU','sent_fmt':'Sent',
             'ctr_fmt':'CTR','conv_fmt':'Conversions','cvr_fmt':'Conv Rate',
             'cg_size_fmt':'CG Size','cg_pct_fmt':'CG %',
-        })
-        cg_display = cg_display.sort_values('Sent', ascending=False)
+        }).sort_values('Sent', ascending=False)
         st.dataframe(cg_display, use_container_width=True, hide_index=True)
-
-        # CG % distribution
-        _avg_cg_pct = cg_campaigns['cg_pct'].mean()
-        _med_cg_pct = cg_campaigns['cg_pct'].median()
-        _col1, _col2, _col3 = st.columns(3)
-        with _col1:
-            st.metric('Avg CG %', f'{_avg_cg_pct:.0f}%', help='Average % of segment allocated to control group')
-        with _col2:
-            st.metric('Median CG %', f'{_med_cg_pct:.0f}%')
-        with _col3:
-            _total_cg_users = cg_campaigns['cg_size'].sum()
-            st.metric('Total Users in CG', f'{_total_cg_users:,.0f}', help='Users withheld from PNs for measurement')
+        st.caption(f'CG Size = users withheld from PN for measurement. CG % = share of total segment in holdout. Conv Rate = conversions ÷ sent (treatment group only).')
     else:
         st.info('No campaigns with control group in the selected period.')
 
     # ── Campaigns MISSING CG — top by volume ─────────────────────────────────
-    st.markdown('<div class="section-header">🎯 High-Volume Campaigns Missing Control Group</div>', unsafe_allow_html=True)
-    st.caption('These campaigns sent to the most users but have no CG — you cannot prove PNs caused any conversions here.')
+    st.markdown('<div class="section-header">🎯 High-Volume Campaigns Missing Control Group — Act Here</div>', unsafe_allow_html=True)
 
-    no_cg = m[~m['has_cg']].copy()
     if not no_cg.empty:
-        no_cg['sent_fmt'] = no_cg['All_Platform_Sent'].apply(lambda v: f'{float(v)/1e6:.1f}M' if float(v)>=1e6 else (f'{float(v)/1000:.0f}K' if float(v)>=1000 else f'{float(v):,.0f}'))
+        _top5_sent = no_cg.nlargest(5,'All_Platform_Sent')['All_Platform_Sent'].sum()
+        _top5_conv = _top5_sent * 0.05  # 5% CG would give this many measurement users
+        st.markdown(f"""
+        <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:14px 18px;margin:8px 0 12px 0">
+            <div style="font-size:13px;color:#92400e">
+            The <strong>top 5 campaigns</strong> on this list sent to <strong>{_sfmt_cg(_top5_sent)}</strong> users combined — with <strong>zero measurement</strong>.
+            A 5% CG on just these 5 campaigns would put <strong>{_sfmt_cg(int(_top5_conv))}</strong> users into a holdout group,
+            letting you prove whether these PNs are actually causing conversions or just correlating with them.
+            <strong>Without a CG, you cannot calculate true PN lift</strong> — you're attributing conversions that may have happened organically.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        no_cg['sent_fmt'] = no_cg['All_Platform_Sent'].apply(_sfmt_cg)
         no_cg['ctr_fmt']  = no_cg['All_Platform_CTR'].apply(lambda x: f'{x:.2f}%')
         no_cg['conv_fmt'] = no_cg['primary_conversions'].apply(lambda x: f'{int(x):,}') if 'primary_conversions' in no_cg.columns else '—'
-        no_cg_display = no_cg[['Campaign_Name','bu','sent_fmt','ctr_fmt','conv_fmt']].rename(columns={
-            'Campaign_Name':'Campaign','bu':'BU','sent_fmt':'Sent','ctr_fmt':'CTR','conv_fmt':'Conversions'
+        no_cg['cg_needed']= no_cg['All_Platform_Sent'].apply(lambda v: f'~{_sfmt_cg(int(v*0.05))} users (5% CG)')
+        no_cg_display = no_cg[['Campaign_Name','bu','sent_fmt','ctr_fmt','conv_fmt','cg_needed']].rename(columns={
+            'Campaign_Name':'Campaign','bu':'BU','sent_fmt':'Sent',
+            'ctr_fmt':'CTR','conv_fmt':'Conversions','cg_needed':'Suggested CG'
         }).sort_values('Sent', ascending=False).head(15)
         st.dataframe(no_cg_display, use_container_width=True, hide_index=True)
-        st.caption(f'Showing top 15 of {len(no_cg):,} campaigns without CG. Adding a 5-10% CG to these would enable proper PN impact measurement.')
+        st.caption(f'{len(no_cg):,} total campaigns without CG. "Suggested CG" = minimum holdout needed at 5% to enable measurement.')
 
     # ── Key insights ──────────────────────────────────────────────────────────
     cg_insights = []
-    cg_insights.append(f"📊 Only **{cg_pct_total:.0f}%** of campaigns ({cg_count:,}) have a control group — meaning {100-cg_pct_total:.0f}% of conversions cannot be proven to be caused by PNs.")
+    cg_insights.append(f"📊 **{cg_pct_total:.0f}% of campaigns ({cg_count:,}/{total:,}) have a control group.** This means for {100-cg_pct_total:.0f}% of your campaigns, you are reporting conversions you cannot attribute to the PN — users in those campaigns may have converted anyway without ever seeing the notification.")
     if adequate_pct < 70 and cg_count > 0:
-        cg_insights.append(f"⚠️ Only **{adequate_pct:.0f}%** of CG campaigns have an adequate sample size (≥{MIN_ADEQUATE_CG} users). Increase CG size for statistically meaningful results.")
-    if 'bu_cg' in dir() and not bu_cg.empty:
+        cg_insights.append(f"⚠️ **{adequate_pct:.0f}%** of CG campaigns meet the ≥{MIN_ADEQUATE_CG}-user minimum for statistical confidence. Campaigns with fewer users in the holdout produce noisy uplift estimates — a 200-user CG can swing wildly by chance.")
+    if 'bu_cg' in locals() and not bu_cg.empty:
         worst_bu = bu_cg.iloc[-1]
         best_bu  = bu_cg.iloc[0]
-        cg_insights.append(f"🔴 **{worst_bu['bu']}** has the lowest CG coverage at **{worst_bu['coverage_pct']:.0f}%** — campaigns in this BU are running blind.")
-        cg_insights.append(f"✅ **{best_bu['bu']}** leads with **{best_bu['coverage_pct']:.0f}%** CG coverage — a model for other BUs to follow.")
-    if not cg_campaigns.empty and 'primary_conversions' in cg_campaigns.columns:
-        _cg_conv_total = cg_campaigns['primary_conversions'].sum()
-        _no_cg_conv_total = no_cg['primary_conversions'].sum() if 'primary_conversions' in no_cg.columns else 0
-        cg_insights.append(f"💡 CG campaigns drove **{_cg_conv_total:,.0f} conversions** vs **{_no_cg_conv_total:,.0f}** in unmeasured campaigns. Only the former can be confidently attributed to the PN.")
-    render_insight_box('Control Group Intelligence — Key Findings', cg_insights)
+        worst_cg_conv = no_cg[no_cg['bu']==worst_bu['bu']]['primary_conversions'].sum() if 'primary_conversions' in no_cg.columns else 0
+        cg_insights.append(f"🔴 **{worst_bu['bu']} — {worst_bu['coverage_pct']:.0f}% CG coverage:** {int(worst_bu['total']-worst_bu['with_cg'])} campaigns ran with no holdout. The {int(worst_cg_conv):,} conversions attributed to these campaigns cannot be proven incremental.")
+        cg_insights.append(f"✅ **{best_bu['bu']} — {best_bu['coverage_pct']:.0f}% CG coverage:** Best practice in this BU. Other BUs should match this standard.")
+    if not cg_campaigns.empty:
+        cg_insights.append(f"💡 **{int(_cg_conv_tot):,} conversions are verified** (from measured campaigns). The remaining **{int(_no_cg_conv):,} conversions** from unmeasured campaigns are directional at best — they show the PN reached users, not that it caused the conversion.")
+    render_insight_box('What these numbers mean', cg_insights)
 
-    render_insight_box('Recommended next steps', [
-        f"🎯 **Set a CG coverage target of ≥50%** across all BUs — run at least half of all campaigns with a 5-10% holdout group",
-        f"📏 **Increase CG size to ≥{MIN_ADEQUATE_CG} users** for statistical significance — tiny CGs (60-100 users) produce unreliable uplift estimates",
-        "🔢 **Ask MoEngage to export CG CVR data** — currently CG conversion rates are not in the export; this would unlock true incremental lift analysis",
-        "📋 **Prioritize CG on high-volume BUs first** — Shop (437 campaigns) and RCBP (299) are the highest priority for measurement",
+    render_insight_box('What to do next', [
+        f"🎯 **Add 5% CG to the top 15 campaigns in the missing-CG table above.** These are your highest-volume campaigns — measurement here will have the biggest impact on your ability to report true PN ROI.",
+        f"📏 **If CG size is below {MIN_ADEQUATE_CG:,} users, it is not useful.** A CG of 60 users on a 50K send = 0.1% holdout. Minimum meaningful CG is 500 users or 5% of segment, whichever is larger.",
+        f"📈 **Use CTR + Conversion Rate together.** A high CTR with 0 conversions means you drove clicks but not outcomes. The Conv Rate column in the table above shows which campaigns actually drove downstream action.",
+        "🔬 **CG campaigns with high Conv Rate are your proof points** — these are the campaigns you can present to leadership as evidence that PNs drive business impact.",
     ], box_type='success')
 
 elif page == '📅 Day-Over-Day (DOD)':
