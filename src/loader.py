@@ -172,6 +172,7 @@ def _to_dataframe(campaigns: list) -> pd.DataFrame:
             'All Platform Failed':      c['failed'],
             'All Platform FCM Delivery Rate': c['delivery_rate'],
             'Goal 1 Click Through Converted Users All Platform': c['conversions'],
+            'primary_conversions': c['conversions'],  # direct mapping for DOD dashboard
         })
     return pd.DataFrame(rows)
 
