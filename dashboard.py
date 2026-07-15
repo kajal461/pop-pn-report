@@ -3640,7 +3640,6 @@ elif page == '🧪 Control Group Analysis':
 
     # ── Tested vs Untested CTR ──────────────────────────────────────────────────
     st.markdown('<div class="section-header">Measured vs Unmeasured Campaigns — CTR Comparison</div>', unsafe_allow_html=True)
-    st.caption('Do campaigns with CG perform differently? This shows if teams are using CGs for specific types of campaigns.')
 
     if 'has_cg' in m.columns and 'All_Platform_CTR' in m.columns and 'bu' in m.columns:
         m['cg_label'] = m['has_cg'].apply(lambda x: '🔬 With Control Group' if x else '📤 No Control Group')
@@ -3663,6 +3662,18 @@ elif page == '🧪 Control Group Analysis':
             legend=dict(orientation='h',yanchor='bottom',y=1.02,xanchor='right',x=1),
         )
         st.plotly_chart(fig_tv, use_container_width=True)
+
+        # Chart interpretation
+        _cg_higher = tested[tested['cg_label']=='🔬 With Control Group']['All_Platform_CTR'].mean()
+        _no_cg_higher = tested[tested['cg_label']=='📤 No Control Group']['All_Platform_CTR'].mean()
+        _upi_cg = tested[(tested['bu'].str.contains('UPI',na=False)) & (tested['cg_label']=='🔬 With Control Group')]['All_Platform_CTR'].mean()
+        _upi_no_cg = tested[(tested['bu'].str.contains('UPI',na=False)) & (tested['cg_label']=='📤 No Control Group')]['All_Platform_CTR'].mean()
+        render_insight_box('What this chart is telling you', [
+            f"**Across almost every BU, unmeasured campaigns (grey) have higher CTR than measured ones (blue).** This is NOT because CG campaigns perform worse — it means your team is putting control groups on their experimental/uncertain campaigns while running confident high-performers without measurement.",
+            f"**UPI is the most extreme case:** Unmeasured UPI campaigns show {_upi_no_cg:.2f}% CTR vs {_upi_cg:.2f}% for measured ones. These high-CTR unmeasured campaigns are likely very small, highly targeted segments — the CTR looks great but you can't prove the PN caused those conversions.",
+            f"**The right approach is the opposite:** Add CG to your highest-volume, highest-CTR campaigns FIRST. Those are the ones where proving causation has the most business value for CMO-level reporting.",
+            f"**UPI - Retention is the only BU where measured campaigns outperform unmeasured** — this suggests that BU is using CG correctly: measuring impactful campaigns rather than just experimental ones.",
+        ], box_type='warning')
 
     # ── CG Performance — campaigns that actually used CG ─────────────────────
     st.markdown('<div class="section-header">📋 Campaigns With Control Group — Performance</div>', unsafe_allow_html=True)
@@ -3740,6 +3751,71 @@ elif page == '🧪 Control Group Analysis':
         }).sort_values('Sent', ascending=False).head(15)
         st.dataframe(no_cg_display, use_container_width=True, hide_index=True)
         st.caption(f'{len(no_cg):,} total campaigns without CG. "Suggested CG" = minimum holdout needed at 5% to enable measurement.')
+
+    # ── CG Conversions & Uplift ───────────────────────────────────────────────
+    st.markdown('<div class="section-header">📈 Control Group Conversions & Incremental Uplift</div>', unsafe_allow_html=True)
+
+    _cg_conv_col    = 'Goal_1_View_Through_Control_Group_Conversions_All_Platform'
+    _cg_cvr_col     = 'Goal_1_View_Through_Control_Group_CVR_All_Platform'
+    _cg_uplift_col  = 'Goal_1_View_Through_Control_Group_Uplift_All_Platform'
+
+    for _col in [_cg_conv_col, _cg_cvr_col, _cg_uplift_col]:
+        if _col in m.columns:
+            m[_col] = pd.to_numeric(m[_col], errors='coerce').fillna(0)
+
+    if _cg_conv_col in m.columns and cg_campaigns is not None and not cg_campaigns.empty:
+        _cg_w_data = m[m['has_cg'] & (m[_cg_conv_col] > 0)].copy()
+
+        if not _cg_w_data.empty:
+            _total_treatment_conv = _cg_w_data['primary_conversions'].sum() if 'primary_conversions' in _cg_w_data.columns else 0
+            _total_cg_conv        = _cg_w_data[_cg_conv_col].sum()
+            _incremental_conv     = _total_treatment_conv - _total_cg_conv
+            _avg_uplift           = _cg_w_data[_cg_uplift_col].replace(0, float('nan')).mean() if _cg_uplift_col in _cg_w_data.columns else 0
+            _campaigns_w_uplift   = (_cg_w_data[_cg_uplift_col] > 0).sum() if _cg_uplift_col in _cg_w_data.columns else 0
+
+            st.markdown(f"""
+            <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 18px;margin:8px 0 12px 0">
+                <div style="font-weight:700;color:#166534;font-size:14px;margin-bottom:8px">💡 How to read this section</div>
+                <div style="font-size:13px;color:#14532d">
+                <strong>Treatment group</strong> = users who RECEIVED the PN → their conversions are in <em>primary_conversions</em>.<br>
+                <strong>Control group</strong> = users withheld from the PN → their <em>organic</em> conversions are in <em>Goal_1_View_Through_Control_Group_Conversions</em>.<br>
+                <strong>Incremental uplift</strong> = Treatment conversions − Control conversions = conversions the PN <em>actually caused</em>.<br><br>
+                Across <strong>{len(_cg_w_data):,} measured campaigns</strong>: Treatment drove <strong>{int(_total_treatment_conv):,}</strong> conversions vs <strong>{int(_total_cg_conv):,}</strong> organic (control group).
+                The PN was <em>directly responsible</em> for <strong>{int(_incremental_conv):,} incremental conversions</strong>.
+                Average uplift across {_campaigns_w_uplift} campaigns with positive uplift: <strong>{_avg_uplift:.1f}%</strong>.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Metrics row
+            _u1, _u2, _u3, _u4 = st.columns(4)
+            with _u1: st.metric('Treatment Conversions', f'{int(_total_treatment_conv):,}', help='Conversions from users who received the PN')
+            with _u2: st.metric('Control Group Conversions', f'{int(_total_cg_conv):,}', help='Organic conversions from users who never received the PN')
+            with _u3: st.metric('Incremental Conversions', f'{int(_incremental_conv):,}', delta=f'PN caused these {int(_incremental_conv):,}', delta_color='normal')
+            with _u4: st.metric('Avg Uplift', f'{_avg_uplift:.1f}%', help='How much more the treatment group converted vs control')
+
+            # Campaign-level uplift table
+            st.markdown('**Campaign-level uplift — sorted by incremental conversions**')
+            _uplift_tbl = _cg_w_data.copy()
+            _uplift_tbl['incremental'] = _uplift_tbl['primary_conversions'] - _uplift_tbl[_cg_conv_col]
+            _uplift_tbl['treatment_cvr'] = (_uplift_tbl['primary_conversions'] / _uplift_tbl['All_Platform_Sent'] * 100).round(3)
+            _uplift_tbl['cg_cvr_fmt']    = _uplift_tbl[_cg_cvr_col].apply(lambda x: f'{x:.2f}%') if _cg_cvr_col in _uplift_tbl.columns else '—'
+            _uplift_tbl['uplift_fmt']    = _uplift_tbl[_cg_uplift_col].apply(lambda x: f'+{x:.0f}%' if x>0 else f'{x:.0f}%') if _cg_uplift_col in _uplift_tbl.columns else '—'
+            _uplift_display = _uplift_tbl[['Campaign_Name','bu','primary_conversions',_cg_conv_col,'incremental','treatment_cvr','cg_cvr_fmt','uplift_fmt']].rename(columns={
+                'Campaign_Name':'Campaign','bu':'BU',
+                'primary_conversions':'Treatment Conv',
+                _cg_conv_col:'CG (Organic) Conv',
+                'incremental':'Incremental Conv',
+                'treatment_cvr':'Treatment CVR%',
+                'cg_cvr_fmt':'CG CVR%',
+                'uplift_fmt':'Uplift',
+            }).sort_values('Incremental Conv', ascending=False).head(20)
+            st.dataframe(_uplift_display, use_container_width=True, hide_index=True)
+            st.caption('Incremental Conv = Treatment Conv − CG Conv. Positive = PN caused extra conversions. Negative = CG converted MORE than treatment (campaign underperformed vs organic).')
+        else:
+            st.info('CG conversion data exists in the export but is zero for all campaigns in the selected period. This may be because campaigns were exported before the attribution window closed.')
+    else:
+        st.info('CG conversion data not available for campaigns in the selected filters.')
 
     # ── Key insights ──────────────────────────────────────────────────────────
     cg_insights = []
