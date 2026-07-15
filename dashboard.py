@@ -3742,16 +3742,12 @@ elif page == '📅 Day-Over-Day (DOD)':
     if 'sent_date' in dod_raw.columns:
         dod_raw['sent_date'] = pd.to_datetime(dod_raw['sent_date']).dt.date
 
-    # ── Filters ───────────────────────────────────────────────────────────────
+    # ── Filters — date only (BU uses global sidebar filter) ──────────────────
     _avail_dates = sorted(dod_raw['sent_date'].unique()) if 'sent_date' in dod_raw.columns else []
     _date_opts   = ['All days'] + [str(d) for d in _avail_dates]
-    _dod_bus     = sorted(dod_raw['bu'].dropna().unique().tolist()) if 'bu' in dod_raw.columns else []
+    _sel_bu      = selected_bus  # use global sidebar BU filter
 
-    _fc1, _fc2 = st.columns([1, 1])
-    with _fc1:
-        _sel_date = st.selectbox('📆 Day filter', _date_opts, index=0)
-    with _fc2:
-        _sel_bu = st.multiselect('🏢 BU filter', _dod_bus, default=_dod_bus)
+    _sel_date = st.selectbox('📆 Day filter', _date_opts, index=0)
 
     # ── Daily aggregate helper ────────────────────────────────────────────────
     def _day_agg(df):
@@ -4072,7 +4068,11 @@ elif page == '📅 Day-Over-Day (DOD)':
         _bu_focus['sent_fmt'] = _bu_focus['sent'].apply(_sfmt)
         _bu_focus['conv_fmt'] = _bu_focus['conversions'].apply(lambda x: f'{int(x):,}')
 
-        _bu_display = _bu_focus[['bu','campaigns','sent_fmt','ctr_fmt','conv_fmt','vs prev']].rename(columns={
+        _bu_display = _bu_focus[
+            (_bu_focus['bu'] != 'Other') &
+            (_bu_focus['bu'].notna()) &
+            (_bu_focus['bu'].astype(str).str.strip() != '')
+        ][['bu','campaigns','sent_fmt','ctr_fmt','conv_fmt','vs prev']].rename(columns={
             'bu':'BU','campaigns':'Campaigns','sent_fmt':'Sent',
             'ctr_fmt':'CTR','conv_fmt':'Conversions','vs prev':'vs Prev Day',
         })
@@ -4084,7 +4084,8 @@ elif page == '📅 Day-Over-Day (DOD)':
     st.markdown(f'<div class="section-header">📋 Campaigns — {_focus_label}</div>', unsafe_allow_html=True)
 
     _camp_data = _focus_data.copy()
-    if _sel_bu and len(_sel_bu) < len(_dod_bus) and 'bu' in _camp_data.columns:
+    _all_dod_bus = sorted(dod_raw['bu'].dropna().unique().tolist()) if 'bu' in dod_raw.columns else []
+    if _sel_bu and len(_sel_bu) < len(_all_dod_bus) and 'bu' in _camp_data.columns:
         _camp_data = _camp_data[_camp_data['bu'].isin(_sel_bu)]
 
     if not _camp_data.empty:
