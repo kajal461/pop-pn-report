@@ -3752,70 +3752,103 @@ elif page == '🧪 Control Group Analysis':
         st.dataframe(no_cg_display, use_container_width=True, hide_index=True)
         st.caption(f'{len(no_cg):,} total campaigns without CG. "Suggested CG" = minimum holdout needed at 5% to enable measurement.')
 
-    # ── CG Conversions & Uplift ───────────────────────────────────────────────
-    st.markdown('<div class="section-header">📈 Control Group Conversions & Incremental Uplift</div>', unsafe_allow_html=True)
+    # ── Did our PNs actually work? Uplift analysis ────────────────────────────
+    st.markdown('<div class="section-header">🎯 Did Our PNs Actually Cause Conversions?</div>', unsafe_allow_html=True)
 
-    _cg_conv_col    = 'Goal_1_View_Through_Control_Group_Conversions_All_Platform'
-    _cg_cvr_col     = 'Goal_1_View_Through_Control_Group_CVR_All_Platform'
-    _cg_uplift_col  = 'Goal_1_View_Through_Control_Group_Uplift_All_Platform'
+    _cg_cvr_col    = 'Goal_1_View_Through_Control_Group_CVR_All_Platform'
+    _cg_uplift_col = 'Goal_1_View_Through_Control_Group_Uplift_All_Platform'
+    _cg_conv_col   = 'Goal_1_View_Through_Control_Group_Conversions_All_Platform'
 
-    for _col in [_cg_conv_col, _cg_cvr_col, _cg_uplift_col]:
+    for _col in [_cg_cvr_col, _cg_uplift_col, _cg_conv_col]:
         if _col in m.columns:
             m[_col] = pd.to_numeric(m[_col], errors='coerce').fillna(0)
 
-    if _cg_conv_col in m.columns and cg_campaigns is not None and not cg_campaigns.empty:
-        _cg_w_data = m[m['has_cg'] & (m[_cg_conv_col] > 0)].copy()
+    if _cg_uplift_col in m.columns:
+        _cg_w_data = m[m['has_cg'] & (m[_cg_uplift_col].notna())].copy()
 
         if not _cg_w_data.empty:
-            _total_treatment_conv = _cg_w_data['primary_conversions'].sum() if 'primary_conversions' in _cg_w_data.columns else 0
-            _total_cg_conv        = _cg_w_data[_cg_conv_col].sum()
-            _incremental_conv     = _total_treatment_conv - _total_cg_conv
-            _avg_uplift           = _cg_w_data[_cg_uplift_col].replace(0, float('nan')).mean() if _cg_uplift_col in _cg_w_data.columns else 0
-            _campaigns_w_uplift   = (_cg_w_data[_cg_uplift_col] > 0).sum() if _cg_uplift_col in _cg_w_data.columns else 0
+            _positive = _cg_w_data[_cg_w_data[_cg_uplift_col] > 0]
+            _negative = _cg_w_data[_cg_w_data[_cg_uplift_col] < 0]
+            _neutral  = _cg_w_data[_cg_w_data[_cg_uplift_col] == 0]
+            _avg_uplift = _positive[_cg_uplift_col].mean() if len(_positive) > 0 else 0
 
+            # Simple language explainer
             st.markdown(f"""
-            <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 18px;margin:8px 0 12px 0">
-                <div style="font-weight:700;color:#166534;font-size:14px;margin-bottom:8px">💡 How to read this section</div>
-                <div style="font-size:13px;color:#14532d">
-                <strong>Treatment group</strong> = users who RECEIVED the PN → their conversions are in <em>primary_conversions</em>.<br>
-                <strong>Control group</strong> = users withheld from the PN → their <em>organic</em> conversions are in <em>Goal_1_View_Through_Control_Group_Conversions</em>.<br>
-                <strong>Incremental uplift</strong> = Treatment conversions − Control conversions = conversions the PN <em>actually caused</em>.<br><br>
-                Across <strong>{len(_cg_w_data):,} measured campaigns</strong>: Treatment drove <strong>{int(_total_treatment_conv):,}</strong> conversions vs <strong>{int(_total_cg_conv):,}</strong> organic (control group).
-                The PN was <em>directly responsible</em> for <strong>{int(_incremental_conv):,} incremental conversions</strong>.
-                Average uplift across {_campaigns_w_uplift} campaigns with positive uplift: <strong>{_avg_uplift:.1f}%</strong>.
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin:8px 0 16px 0">
+                <div style="font-weight:700;color:#1e40af;font-size:14px;margin-bottom:10px">💡 What does "uplift" mean?</div>
+                <div style="font-size:13px;color:#1e3a8a;line-height:1.7">
+                When we send a PN, some users would have converted <em>anyway</em> — without ever seeing our notification.
+                The <strong>control group</strong> is a small batch of users we deliberately <em>don't</em> send to, so we can measure that organic rate.<br><br>
+                <strong>Uplift = how much MORE the PN users converted vs the users who got nothing.</strong><br>
+                • <strong>+100% uplift</strong> = PN users converted 2x more than organic users — the PN doubled conversions<br>
+                • <strong>+0% uplift</strong> = PN had no effect — users were going to convert anyway<br>
+                • <strong>Negative uplift</strong> = the PN may have annoyed users or the campaign segment naturally converts less
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            # Metrics row
-            _u1, _u2, _u3, _u4 = st.columns(4)
-            with _u1: st.metric('Treatment Conversions', f'{int(_total_treatment_conv):,}', help='Conversions from users who received the PN')
-            with _u2: st.metric('Control Group Conversions', f'{int(_total_cg_conv):,}', help='Organic conversions from users who never received the PN')
-            with _u3: st.metric('Incremental Conversions', f'{int(_incremental_conv):,}', delta=f'PN caused these {int(_incremental_conv):,}', delta_color='normal')
-            with _u4: st.metric('Avg Uplift', f'{_avg_uplift:.1f}%', help='How much more the treatment group converted vs control')
+            # Summary metrics — simple language
+            _m1, _m2, _m3, _m4 = st.columns(4)
+            with _m1:
+                st.metric('Campaigns Measured', f'{len(_cg_w_data):,}',
+                          help='Campaigns that had a control group — the only ones where we can prove PN impact')
+            with _m2:
+                _pct_pos = len(_positive)/len(_cg_w_data)*100 if len(_cg_w_data) > 0 else 0
+                st.metric('PN Actually Worked', f'{len(_positive):,} campaigns',
+                          delta=f'{_pct_pos:.0f}% of measured', delta_color='normal',
+                          help='Campaigns where PN users converted MORE than holdout users')
+            with _m3:
+                st.metric('Avg Uplift (where positive)', f'+{_avg_uplift:.0f}%',
+                          help='On campaigns where PNs worked — how much extra conversion did they drive vs organic')
+            with _m4:
+                _pct_neg = len(_negative)/len(_cg_w_data)*100 if len(_cg_w_data) > 0 else 0
+                st.metric('PN Had No / Negative Effect', f'{len(_negative)+len(_neutral):,} campaigns',
+                          delta=f'{_pct_neg:.0f}% negative, rest neutral', delta_color='off',
+                          help='Campaigns where holdout users converted at the same or higher rate')
 
-            # Campaign-level uplift table
-            st.markdown('**Campaign-level uplift — sorted by incremental conversions**')
+            # Traffic light summary
+            _tl_color = '#22c55e' if _pct_pos >= 60 else ('#f59e0b' if _pct_pos >= 40 else '#ef4444')
+            st.markdown(f"""
+            <div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin:8px 0 16px 0;display:flex;align-items:center;gap:16px">
+                <div style="font-size:36px">{"✅" if _pct_pos >= 60 else ("⚠️" if _pct_pos >= 40 else "🔴")}</div>
+                <div>
+                    <div style="font-weight:700;color:#0f172a;font-size:15px">
+                    {"PNs are working well" if _pct_pos >= 60 else ("Mixed results — room to improve" if _pct_pos >= 40 else "PNs are underperforming vs organic")}
+                    </div>
+                    <div style="font-size:13px;color:#64748b">
+                    {_pct_pos:.0f}% of measured campaigns showed positive uplift.
+                    {"Good signal — keep measuring and optimise the negative ones." if _pct_pos >= 60 else "Investigate campaigns with negative uplift — either wrong audience or message isn't compelling." if _pct_pos >= 40 else "Review targeting and copy — a high organic conversion rate with low PN uplift means your audience would convert without the PN."}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Campaign-level uplift table — simplified columns
+            st.markdown('**Campaign-level results — did each PN actually cause conversions?**')
             _uplift_tbl = _cg_w_data.copy()
-            _uplift_tbl['incremental'] = _uplift_tbl['primary_conversions'] - _uplift_tbl[_cg_conv_col]
-            _uplift_tbl['treatment_cvr'] = (_uplift_tbl['primary_conversions'] / _uplift_tbl['All_Platform_Sent'] * 100).round(3)
-            _uplift_tbl['cg_cvr_fmt']    = _uplift_tbl[_cg_cvr_col].apply(lambda x: f'{x:.2f}%') if _cg_cvr_col in _uplift_tbl.columns else '—'
-            _uplift_tbl['uplift_fmt']    = _uplift_tbl[_cg_uplift_col].apply(lambda x: f'+{x:.0f}%' if x>0 else f'{x:.0f}%') if _cg_uplift_col in _uplift_tbl.columns else '—'
-            _uplift_display = _uplift_tbl[['Campaign_Name','bu','primary_conversions',_cg_conv_col,'incremental','treatment_cvr','cg_cvr_fmt','uplift_fmt']].rename(columns={
+            _uplift_tbl['organic_cvr'] = _uplift_tbl[_cg_cvr_col].apply(lambda x: f'{x:.2f}%') if _cg_cvr_col in _uplift_tbl.columns else '—'
+            _uplift_tbl['treatment_cvr'] = (_uplift_tbl['primary_conversions'] / _uplift_tbl['All_Platform_Sent'] * 100).round(3).apply(lambda x: f'{x:.3f}%')
+            _uplift_tbl['uplift_fmt'] = _uplift_tbl[_cg_uplift_col].apply(
+                lambda x: f'✅ +{x:.0f}%' if x > 0 else ('➡️ 0%' if x == 0 else f'🔴 {x:.0f}%'))
+            _uplift_tbl['verdict'] = _uplift_tbl[_cg_uplift_col].apply(
+                lambda x: 'PN drove extra conversions' if x > 50
+                else ('PN had modest impact' if x > 0
+                else ('No measurable impact' if x == 0
+                else 'Users converted organically without PN')))
+
+            _uplift_display = _uplift_tbl[['Campaign_Name','bu','treatment_cvr','organic_cvr','uplift_fmt','verdict']].rename(columns={
                 'Campaign_Name':'Campaign','bu':'BU',
-                'primary_conversions':'Treatment Conv',
-                _cg_conv_col:'CG (Organic) Conv',
-                'incremental':'Incremental Conv',
-                'treatment_cvr':'Treatment CVR%',
-                'cg_cvr_fmt':'CG CVR%',
+                'treatment_cvr':'PN Users CVR',
+                'organic_cvr':'No-PN Users CVR',
                 'uplift_fmt':'Uplift',
-            }).sort_values('Incremental Conv', ascending=False).head(20)
+                'verdict':'What it means',
+            }).sort_values('Uplift', ascending=False).head(25)
             st.dataframe(_uplift_display, use_container_width=True, hide_index=True)
-            st.caption('Incremental Conv = Treatment Conv − CG Conv. Positive = PN caused extra conversions. Negative = CG converted MORE than treatment (campaign underperformed vs organic).')
+            st.caption('"PN Users CVR" = conversion rate of users who got the PN. "No-PN Users CVR" = organic rate of holdout users. Uplift = how much the PN added on top of organic.')
         else:
-            st.info('CG conversion data exists in the export but is zero for all campaigns in the selected period. This may be because campaigns were exported before the attribution window closed.')
+            st.info('No uplift data available for campaigns in the selected filters.')
     else:
-        st.info('CG conversion data not available for campaigns in the selected filters.')
+        st.info('Uplift data not available — ensure campaigns are configured with control groups in MoEngage.')
 
     # ── Key insights ──────────────────────────────────────────────────────────
     cg_insights = []
