@@ -3940,20 +3940,24 @@ elif page == '📅 Day-Over-Day (DOD)':
 
     # ── Daily aggregate helper ────────────────────────────────────────────────
     def _day_agg(df):
-        """Aggregate campaign rows by sent_date → one row per day."""
+        """Aggregate campaign rows by sent_date → one row per day.
+        Campaign count uses unique names (not IDs) to avoid inflating
+        count with A/B test variations of the same campaign.
+        """
         if df.empty or 'sent_date' not in df.columns:
             return pd.DataFrame()
-        _s = 'All_Platform_Sent'
-        _ctr = 'All_Platform_CTR'
-        _cid = 'Campaign_ID' if 'Campaign_ID' in df.columns else df.columns[0]
+        _s    = 'All_Platform_Sent'
+        _ctr  = 'All_Platform_CTR'
+        _name = 'Campaign_Name' if 'Campaign_Name' in df.columns else (
+                'Campaign_ID'   if 'Campaign_ID'   in df.columns else df.columns[0])
         _conv = 'primary_conversions'
         df = df.copy()
         df['_wt_clicks'] = df[_s] * df[_ctr] / 100 if _ctr in df.columns else 0
         agg = df.groupby('sent_date').agg(
-            campaigns=(_cid, 'nunique'),
-            sent=(_s, 'sum') if _s in df.columns else (_cid, 'count'),
+            campaigns=(_name, 'nunique'),   # unique names = true campaign count
+            sent=(_s, 'sum') if _s in df.columns else (_name, 'count'),
             wt_clicks=('_wt_clicks', 'sum'),
-            conversions=(_conv, 'sum') if _conv in df.columns else (_cid, 'count'),
+            conversions=(_conv, 'sum') if _conv in df.columns else (_name, 'count'),
         ).reset_index()
         agg['ctr'] = (agg['wt_clicks'] / agg['sent'].replace(0, float('nan')) * 100).fillna(0).round(2)
         return agg.sort_values('sent_date')
@@ -4012,7 +4016,9 @@ elif page == '📅 Day-Over-Day (DOD)':
     _mtd_wt_cl = float((_daily['wt_clicks']).sum()) if 'wt_clicks' in _daily.columns else 0
     _mtd_ctr   = (_mtd_wt_cl / _mtd_sent * 100)   if _mtd_sent else 0
     _mtd_conv  = float(_daily['conversions'].sum()) if not _daily.empty else 0
-    _mtd_camps = int(dod_raw['Campaign_ID'].nunique()) if 'Campaign_ID' in dod_raw.columns else 0
+    # Use unique Campaign_Name to avoid inflating count with A/B test variations
+    _mtd_camps = int(dod_raw['Campaign_Name'].nunique()) if 'Campaign_Name' in dod_raw.columns else (
+                 int(dod_raw['Campaign_ID'].nunique()) if 'Campaign_ID' in dod_raw.columns else 0)
 
     # Prior month CTR from summary_overall
     _prev_ctr = None
@@ -4239,8 +4245,9 @@ elif page == '📅 Day-Over-Day (DOD)':
             _s = _g['All_Platform_Sent'].sum()
             return ((_g['All_Platform_Sent'] * _g['All_Platform_CTR']).sum() / _s) if _s > 0 else 0
 
+        _camp_name_col = 'Campaign_Name' if 'Campaign_Name' in _focus_data.columns else 'Campaign_ID'
         _bu_focus = _focus_data.groupby('bu').agg(
-            campaigns=('Campaign_ID','nunique') if 'Campaign_ID' in _focus_data.columns else ('bu','count'),
+            campaigns=(_camp_name_col,'nunique'),  # unique names to avoid A/B inflation
             sent=('All_Platform_Sent','sum'),
             conversions=('primary_conversions','sum') if 'primary_conversions' in _focus_data.columns else ('bu','count'),
         ).reset_index()
