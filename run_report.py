@@ -152,13 +152,29 @@ def main() -> None:
                 campaign_ids=_ids_to_search,
                 app_id=app_id, secret_key=secret_key, data_center=data_center,
             )
-            _tags_map = {k: v.get('tags', []) for k, v in _meta.items()}
+            _tags_map      = {k: v.get('tags', [])         for k, v in _meta.items()}
+            _delivery_map  = {k: v.get('delivery_type', '') for k, v in _meta.items()}
             for cid, mv in _meta.items():
                 if mv.get('name'):
                     dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Name']     = mv['name']
                     dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Sent Time'] = mv.get('sent_time','')
+                    dod_df.loc[dod_df['Campaign ID']==cid, 'delivery_type']      = mv.get('delivery_type','')
+
+            # Filter out Flow / triggered / recurring campaigns — keep ONE_TIME only
+            # Campaigns not found by Search API (empty delivery_type) are excluded too
+            # as they are likely Flow child campaigns
+            _KEEP_TYPES = {'ONE_TIME', ''}   # '' = not found → assume non-one-time, exclude below
+            _flow_types = {'EVENT_TRIGGERED', 'PERIODIC', 'TRANSACTIONAL', 'FLOW'}
+            if 'delivery_type' in dod_df.columns:
+                _before = len(dod_df)
+                # Keep if delivery_type is ONE_TIME or if we couldn't determine (empty name = no match)
+                # Exclude confirmed Flow/triggered types
+                _is_flow = dod_df['Campaign ID'].map(_delivery_map).isin(_flow_types)
+                dod_df   = dod_df[~_is_flow].copy()
+                print(f'   -> Excluded {_before - len(dod_df)} Flow/triggered campaigns, keeping {len(dod_df)} ONE_TIME')
         else:
-            _tags_map = {}
+            _tags_map     = {}
+            _delivery_map = {}
 
         # ── Step 3: BU detection — name prefix for anything still missing BU ──
         def _detect_bu(row):

@@ -356,6 +356,7 @@ def fetch_campaign_metadata(
                     'tags':             bd.get('tags', []) or [],
                     'sent_time':        c.get('sent_time', '') or '',
                     'parent_id':        c.get('parent_id', '') or '',
+                    'delivery_type':    c.get('campaign_delivery_type', '') or '',
                 }
         except Exception:
             pass  # Leave metadata blank — campaign shows with ID only
@@ -384,8 +385,9 @@ def fetch_campaign_metadata(
                 c  = results[0]
                 bd = c.get('basic_details', {}) or {}
                 parent_meta = {
-                    'name':      bd.get('name', ''),
-                    'tags':      bd.get('tags', []) or [],
+                    'name':          bd.get('name', ''),
+                    'tags':          bd.get('tags', []) or [],
+                    'delivery_type': c.get('campaign_delivery_type', '') or '',
                     'sent_time': c.get('sent_time', '') or '',
                 }
                 # Apply parent metadata to all child campaigns with this parent
