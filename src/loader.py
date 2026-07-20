@@ -226,7 +226,6 @@ def load_from_moengage_api(
             'end_date':         date_to,
             'attribution_type': 'CLICK_THROUGH',
             'metric_type':      'TOTAL',
-            'channel':          'PUSH',   # only PUSH campaigns — matches CSV export scope
             'offset':           offset,
             'limit':            limit,
         }
