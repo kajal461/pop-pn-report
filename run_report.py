@@ -162,15 +162,27 @@ def main() -> None:
 
         # ── Step 3: BU detection — name prefix for anything still missing BU ──
         def _detect_bu(row):
-            # Already have BU from master_enriched
+            # Already have BU from master_enriched (most accurate — has Tag Category data)
             existing_bu = row.get('bu', '')
-            if existing_bu and str(existing_bu) not in ('', 'nan', 'None'):
+            if existing_bu and str(existing_bu) not in ('', 'nan', 'None', 'UPI'):
                 return existing_bu
             name_upper = str(row.get('Campaign Name', '')).upper()
             # Tags from Search API
             for tag in _tags_map.get(row.get('Campaign ID', ''), []):
                 if tag in TAG_VALUE_TO_BU:
                     return TAG_VALUE_TO_BU[tag]
+            # UPI subtype — use campaign name signals before generic prefix match
+            if 'UPI' in name_upper or name_upper.startswith(('PAY','PAYMENT')):
+                from config import UPI_ACQUISITION_GOAL_SIGNALS
+                acq_signals = ['NTU','D-1','FIRST','ACQUISITION','ACQUIRE','NEW','ONBOARD']
+                ret_signals = ['RETENTION','RETAIN','TXNX','CASHBACK','REWARD','ACTIVE','REGULAR']
+                if any(s in name_upper for s in acq_signals):
+                    return 'UPI - Acquisition'
+                if any(s in name_upper for s in ret_signals):
+                    return 'UPI - Retention'
+                # Default UPI subtype based on existing_bu if it was generic
+                if existing_bu == 'UPI':
+                    return 'UPI - Retention'  # most UPI campaigns are retention
             # Campaign name prefix
             for prefix, bu in CAMPAIGN_NAME_BU_MAP.items():
                 if name_upper.startswith(prefix):
