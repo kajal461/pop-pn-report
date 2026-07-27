@@ -160,18 +160,29 @@ def main() -> None:
                     dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Sent Time'] = mv.get('sent_time','')
                     dod_df.loc[dod_df['Campaign ID']==cid, 'delivery_type']      = mv.get('delivery_type','')
 
-            # Filter out Flow / triggered / recurring campaigns — keep ONE_TIME only
-            # Campaigns not found by Search API (empty delivery_type) are excluded too
-            # as they are likely Flow child campaigns
-            _KEEP_TYPES = {'ONE_TIME', ''}   # '' = not found → assume non-one-time, exclude below
+            # Filter 1: exclude confirmed Flow/triggered delivery types
             _flow_types = {'EVENT_TRIGGERED', 'PERIODIC', 'TRANSACTIONAL', 'FLOW'}
             if 'delivery_type' in dod_df.columns:
-                _before = len(dod_df)
-                # Keep if delivery_type is ONE_TIME or if we couldn't determine (empty name = no match)
-                # Exclude confirmed Flow/triggered types
-                _is_flow = dod_df['Campaign ID'].map(_delivery_map).isin(_flow_types)
-                dod_df   = dod_df[~_is_flow].copy()
-                print(f'   -> Excluded {_before - len(dod_df)} Flow/triggered campaigns, keeping {len(dod_df)} ONE_TIME')
+                _is_flow_type = dod_df['Campaign ID'].map(_delivery_map).isin(_flow_types)
+            else:
+                _is_flow_type = pd.Series(False, index=dod_df.index)
+
+            # Filter 2: exclude Journey campaigns by name pattern
+            # These are streak/flow campaigns (D0 PN, D3 PN, SMS_D1, etc.)
+            # that slip through because Search API can't find their child IDs
+            import re as _re
+            _journey_pattern = _re.compile(
+                r'^(D\d+\s*PN|SMS_D\d+|D\d+_PN|Day\d+|JOURNEY_|FLOW_)',
+                _re.IGNORECASE
+            )
+            _is_journey_name = dod_df['Campaign Name'].fillna('').apply(
+                lambda x: bool(_journey_pattern.match(str(x)))
+            )
+
+            _before  = len(dod_df)
+            dod_df   = dod_df[~(_is_flow_type | _is_journey_name)].copy()
+            _excluded = _before - len(dod_df)
+            print(f'   -> Excluded {_excluded} Flow/Journey campaigns ({_is_flow_type.sum()} by type, {_is_journey_name.sum()} by name), keeping {len(dod_df)}')
         else:
             _tags_map     = {}
             _delivery_map = {}
