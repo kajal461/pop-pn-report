@@ -427,17 +427,33 @@ Discover data catalog · Product analytics · Read user events · Read campaign 
 
 After 4 Agent 1 runs, real per-user samples reached 29 valid users across 3 of 20 lifecycle cells (below the 100-user threshold for a non-directional finding). Rather than blocking Agent 2's build on reaching full statistical power, the decision is to **seed Agent 2 with the current directional findings now**, explicitly labeled as provisional, and let Agent 1 continue accumulating via scheduled resume runs. Agent 2's own rules (never auto-apply changes >50%, always require CRM sign-off on high-impact shifts) are the safety net that makes this acceptable — a provisional seed is fine precisely because nothing downstream executes automatically on it.
 
-### Seed data from Agent 1 Run v4 (2026-08-06) — n=29 valid users across 3 cells
+### Seed data — SUPERSEDED by Run v5 (2026-08-06) — n=64 valid users across 3 cells
+
+Run v4's numbers below are kept for history but are now superseded — one of the two conclusions they supported did not hold up as sample size grew. Use Run v5's cumulative numbers (further below) as the actual seed for Agent 2.
+
+<details><summary>Run v4 seed data (superseded, n=29) — click to expand</summary>
 
 | Cell | n (users, user-days) | Observed PN/day | Observed CTR | Note |
 |---|---|---|---|---|
 | Onboarding × ≥3 UPI txns/30d | 9 users, 205 user-days | 6.16 | 0.24% | Already saturated at current volume — no engagement lift from high frequency |
 | Veteran × ≥3 UPI txns/30d (casual) | 6 users, 170 user-days | 3.65 | 0.32% | Also low engagement, lower volume than onboarding |
-| Veteran × ≥40 UPI txns/30d (power) | 14 users, 348 user-days | 2.82 (peak engagement at 4-5/day) | 3.15% (peak 4.32% at 4-5/day) | Only cell showing real engagement lift with volume — the one cohort where current cadence may be under-, not over-, utilized |
+| Veteran × ≥40 UPI txns/30d (power) | 14 users, 348 user-days | 2.82 (peak engagement at 4-5/day) | 3.15% (peak 4.32% at 4-5/day) | Only cell showing real engagement lift with volume |
 
-**Confidence caveat baked into Agent 2's instructions below:** these numbers are built on single-digit-to-low-double-digit total clicks per cell (2-31) — directionally trustworthy (power users engage more than casual/new users at similar or lower volume), but the precise percentages should not be treated as stable. Agent 2 must not present these as final numbers to any stakeholder without this caveat attached, and must prefer wider, more conservative slot caps over precise ones derived from this seed.
+</details>
 
-**Separately flagged finding (not a slot-cap question):** 33% of sampled Veteran ≥3 users (3 of 9) received zero push notifications in 30 days despite actively transacting — a reachability/push-token health signal, not an engagement/fatigue signal. Agent 2 must treat these as a distinct category (see Step 3 below) rather than folding them into fatigue suppression logic, since suppressing an already-unreachable user achieves nothing — the fix is a token/permission health check, not a volume reduction.
+### Seed data from Agent 1 Run v5 (2026-08-06) — n=64 valid users, cumulative across v3+v4+v5
+
+| Cell | n (users, user-days) | Observed PN/day | Observed CTR | Note |
+|---|---|---|---|---|
+| Onboarding × ≥3 UPI txns/30d | 26 users, 523 user-days | 5.54 (peak 3/day) | 0.48% | **Age-effect finding REVERSED from Run v4** — CTR is now statistically indistinguishable from Veteran-casual (was 0.24% vs 0.32% at n=9/n=6, now 0.48% vs 0.49% at n=26/n=11). Platform age alone does not appear to predict engagement — treat the earlier "onboarders are more saturated" narrative as noise, not signal. |
+| Veteran × ≥3 UPI txns/30d (casual) | 11 users, 289 user-days | 3.52 (peak 4-5/day) | 0.49% | Consistent with Onboarding≥3 now — age effect not holding up |
+| Veteran × ≥40 UPI txns/30d (power) | 27 users, 666 user-days | 3.24 (peak 4-5/day) | 2.83% (peak 3.79% at 4-5/day) | **This finding IS holding up and stabilizing** — ratio vs Veteran-casual narrowed from ~10x (Run v4) to ~5.8x (Run v5) as expected with more data, but direction is consistent and reproducing. Activity level, not platform age, is the more trustworthy predictor of PN engagement tolerance found so far. |
+
+**Revised guidance for Agent 2:** weight the activity-tier axis more heavily than the platform-age axis when picking a "nearest measured cell" for the 17 unmeasured proxy cells — age has not shown a reliable effect in what's been measured, activity level has.
+
+**Confidence caveat (still applies, sample still below 100):** built on low-double-digit total clicks in the weaker cells (5-14). Directionally more trustworthy than Run v4 given the larger sample, but percentages still not fully stable. Prefer conservative, rounder caps over precise derived numbers.
+
+**Reachability finding — reproduced and refined (upgrade from "worth checking" to "escalate now"):** the zero-received-notification anomaly reproduced across two independent samples (Run v4: 33.3% of Veteran≥3; Run v5: 31.3% of Veteran≥3, 5/16). Critically, **it is NOT simply a function of platform age** — Veteran≥40 (equally long tenure) shows only 10.0%, while Onboarding≥3 shows 16.1%. The anomaly is concentrated specifically in **casual, lower-engagement long-tenured users**, not long tenure generally. Refined hypothesis: power users' frequent app opens keep push tokens fresh through general usage; casual veterans who transact occasionally without opening the app regularly may be the ones going stale. Raise this refined framing with engineering, not the broader "all D90+ users" framing from Run v4.
 
 **For the 17 cells with no direct measurement yet:** Agent 2 must not invent numbers for these. It borrows the shape of the nearest measured cell by proximity on both axes (platform age and activity tier) and labels every such borrowed value as "proxy, low confidence" in its output — never presented at the same confidence level as the 3 directly-measured cells above.
 
@@ -456,25 +472,43 @@ supplemented by proxy values for unmeasured cells), produce a current
 fatigue report and a BU slot allocation recommendation. Flag urgent
 risk. Never take irreversible action.
 
-## Seed saturation data (2026-08-06, n=29 across 3 of 20 cells - directional, not final)
-- Onboarding x >=3 UPI txns/30d: observed ~6.16 PN/day, 0.24% CTR
-  (9 users, 205 user-days). Already saturated - no engagement lift
-  observed from current volume. Provisional cap: reduce toward 2-3/day.
-- Veteran x >=3 UPI txns/30d (casual): observed ~3.65 PN/day, 0.32%
-  CTR (6 users, 170 user-days). Low engagement at lower volume than
-  onboarding. Provisional cap: hold near 3/day, monitor.
-- Veteran x >=40 UPI txns/30d (power): observed ~2.82 PN/day average,
-  peak engagement (4.32% CTR) at 4-5 PN/day (14 users, 348 user-days).
-  This is the ONE measured cell where volume could be maintained or
-  slightly increased toward the observed peak, not cut.
-- All other cells (17 of 20): NOT directly measured. Borrow the shape
-  of the nearest measured cell on both platform-age and activity-tier
-  axes. Label every such value "proxy, low confidence" - never present
-  at the same confidence level as the 3 measured cells above.
+## Seed saturation data (2026-08-06 Run v5, cumulative n=64 across 3 of 20 cells - directional, not final)
+- Onboarding x >=3 UPI txns/30d: observed ~5.54 PN/day (peak 3/day),
+  0.48% CTR (26 users, 523 user-days). NOTE: earlier data (n=9) showed
+  this cell as more saturated than Veteran-casual - that gap has
+  DISAPPEARED with more data (now statistically indistinguishable from
+  Veteran-casual's 0.49%). Do not treat platform age as a reliable
+  predictor of engagement based on what's measured so far.
+- Veteran x >=3 UPI txns/30d (casual): observed ~3.52 PN/day (peak
+  4-5/day), 0.49% CTR (11 users, 289 user-days). Essentially identical
+  engagement to Onboarding at the same activity tier.
+- Veteran x >=40 UPI txns/30d (power): observed ~3.24 PN/day (peak
+  4-5/day), 2.83% CTR, peak 3.79% at 4-5/day (27 users, 666 user-days).
+  This finding IS holding up and stabilizing as sample grows (ratio vs
+  casual veterans narrowed from ~10x to ~5.8x, direction unchanged).
+  Activity level - not platform age - is the more trustworthy
+  predictor of PN tolerance found so far. This remains the one
+  measured cell where volume could be maintained or slightly
+  increased toward the observed peak, not cut.
+- PROXY RULE - REVISED: for the 17 unmeasured cells, when borrowing
+  the shape of the nearest measured cell, weight the ACTIVITY-TIER
+  axis more heavily than the platform-age axis - age has not shown a
+  reliable effect in what's been measured, activity level has. Label
+  every borrowed value "proxy, low confidence."
 - Confidence caveat (must repeat in every output that cites these
-  numbers): built on single-digit-to-low-double-digit total clicks per
-  cell. Directionally trustworthy, precise percentages are not stable.
-  Prefer conservative, rounder caps over precise derived numbers.
+  numbers): sample has grown (was n=29, now n=64) but is still below
+  the 100-user threshold for a non-directional finding. Precise
+  percentages, especially for the two Veteran cells (11 and 27 users),
+  are not fully stable yet. Prefer conservative, rounder caps.
+- Reachability flag - REFINED: zero-received-notification rate is
+  NOT simply a function of platform age. Veteran-casual shows 31.3%
+  (reproduced across 2 samples, escalate), but Veteran-power (equally
+  long tenure) shows only 10.0% and Onboarding shows 16.1%. The
+  anomaly is concentrated in casual/lower-engagement long-tenured
+  users specifically, not long tenure generally - likely because
+  power users' frequent app opens keep push tokens fresh through
+  general usage. Frame any engineering escalation this way, not as
+  a generic "D90+ users" issue.
 
 ## Two-Layer Rule (must always apply)
 1. PLATFORM LIFECYCLE IS A HARD CEILING. A user's total PN count for
@@ -625,24 +659,29 @@ Both agents above are MoEngage no-code Custom Agents (Merlin AI Studio), not app
 
 ## 10. Next Actions (current status as of 2026-08-06)
 
-**Agent 1 has run 4 times.** Run v4 (resume-based) reached 29 valid users across 3 of 20 cells. Decision made: proceed with Agent 2 (Section 5) using this as seed data (Option B), while Agent 1 keeps accumulating in parallel via weekly resume runs. **Agent 1's v4 results were written to a NEW memory file (`run_findings_20260806_v4.md`), separate from v3's file** — any future resume run must read the v4 file, not v3, or it will work from stale counts (8 users, not 29).
+**Agent 1 has run 5 times.** Run v5 (resume-based) reached **64 valid users cumulative** across the same 3 cells (up from 29 after v4). Gap to the 100-user threshold is now ~36 (down from ~71). **Run v5's results were written to `run_findings_20260806_v5.md`** — any future resume run must read this file, not v4 or v3, or it will lose progress.
 
-**Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. Awaiting CRM sign-off decision on that recommendation.
+**Important finding from v5: one of the two comparisons reversed.** The "platform age matters" conclusion from v4 (Onboarding more saturated than Veteran-casual) did NOT hold up with more data — CTR is now statistically indistinguishable between them (0.48% vs 0.49%). The "activity level matters" conclusion DID hold up and stabilized (ratio narrowed from ~10x to ~5.8x, direction unchanged) — this is the more trustworthy finding going forward. Agent 2's seed data and proxy-cell rule (Section 5 above) have been updated accordingly — activity tier now weighted more heavily than platform age when picking proxy values for unmeasured cells.
 
-### 🚩 New MoEngage issue to raise: Agent 2's tools uniformly denied
+**Reachability anomaly reproduced and refined.** Zero-received-notification rate is not simply age-driven — it's concentrated in casual/lower-engagement long-tenured users (31.3%), not long-tenured users generally (Veteran-power is only 10.0%). Refined hypothesis: frequent app opens keep push tokens fresh; infrequent-but-still-transacting veterans may be the ones going stale. Raise with engineering using this framing.
 
-Every tool assigned to Agent 2 (campaign search, campaign stats, delivery stats, behavior analysis, segment listing/creation, dashboards, flows — read AND write) returned "Permission to use … has been denied" in its first test run, despite Agent 1 (same workspace) successfully using equivalent read tools across 4 runs. This looks like a role/permission-grant gap specific to this agent's execution context, not a tool-selection or instruction problem. Action: check Settings → Team/Roles for the account running Agent 2 (Campaign Read, Analytics Read, Segment Read/Manage, Flow Read); if all present and it still fails, raise directly with MoEngage support — ask whether Agentic AI/Custom Agents requires a separate permission grant beyond builder-UI access.
+**Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. **This specific recommendation was based on Run v4's now-superseded numbers — re-run Agent 2 once permissions are fixed so it picks up Run v5's revised seed data before finalizing the sign-off decision.**
 
-**Also found during Agent 2's build:** the tool picker added "Create campaign drafts" and "Edit campaigns" (write tools) beyond the 10 read-only tools specified in Section 5's instructions — "Edit campaigns" can modify live campaign content/schedule/audience. Strip these back to exactly the 10 listed in Section 5 before the permissions issue is resolved and the agent starts actually executing.
+### 🚩 MoEngage issues to raise (running list)
+
+1. **Agent 2's tools uniformly denied.** Every tool assigned to Agent 2 (campaign search, campaign stats, delivery stats, behavior analysis, segment listing/creation, dashboards, flows — read AND write) returned "Permission to use … has been denied" in its first test run, despite Agent 1 (same workspace) successfully using equivalent read tools across 5 runs. Looks like a role/permission-grant gap specific to this agent's execution context. Check Settings → Team/Roles for the account running Agent 2; if permissions look correct and it still fails, raise with MoEngage support directly — ask whether Agentic AI/Custom Agents requires a separate permission grant beyond builder-UI access.
+2. **Extra write tools got added to Agent 2's tool list** ("Create campaign drafts," "Edit campaigns") beyond the 10 read-only tools specified. Strip back to exactly the 10 listed in Section 5.
+3. **New (Run v5): `get_user_events` with an actions filter returns HTTP 500 without an explicit `attributes` projection.** Fix found: add `attributes: [{name: "moe_campaign_id", data_type: "string"}]` to the payload. Worth testing whether this projection also restores `moe_campaign_tags` (which an actions filter was previously found to strip, per Run 3) — if so, this may unblock true per-user BU composition analysis, blocked since Run 3.
 
 **What's actually needed right now:**
 
 1. ~~Build Agent 2~~ — done (2026-08-06), blocked on permissions per above.
-2. **Fix Agent 2's permissions + tool list**, then re-run it — no instruction changes needed, the logic is validated.
-3. **Run Agent 1 approximately 3 more times** (weekly cadence) using Instructions v5 below, to push the 3-cell sample past the 100-user threshold. This runs independently of Agent 2 — Agent 2 checks for newer Agent 1 data each time it runs and upgrades automatically.
-4. **Decide on the Onboarding × Active/Regular sign-off** (6→3, or ramped 6→4→3) — can happen now on provisional data or after live-tool access is restored, CRM head's call.
+2. **Fix Agent 2's permissions + tool list**, then re-run it — no instruction changes needed, the rule logic is validated. It will pick up Run v5's revised seed data automatically.
+3. **Run Agent 1 approximately 2-3 more times** (weekly cadence) using Instructions v6 below, to close the remaining ~36-user gap to the 100-user threshold.
+4. **Test the `attributes` projection fix specifically for BU composition** — if it restores `moe_campaign_tags`, this reopens Step 9 (BU composition analysis) which has been blocked since Run 3.
+5. **Re-decide on the Onboarding × Active/Regular sign-off** using Agent 2's next run (on Run v5 data), not the original Run v4-based recommendation — the underlying numbers changed materially.
 
-### Instructions v5 (ready to paste — same 3-cell resume pattern as v4, corrected to read the v4 memory file)
+### Instructions v6 (ready to paste — same 3-cell resume pattern, corrected to read the v5 memory file)
 
 ```
 ## Role
@@ -654,20 +693,30 @@ working across sessions.
 Resume event-sampling on 3 already-provisioned cells to maximize new
 fully-sampled users this run, working toward crossing 100 total
 sampled users across the 3 cells combined - the threshold at which
-findings stop being directional-only.
+findings stop being directional-only. Currently at 64/100.
 
 ## Step 0 - READ MEMORY FIRST
-Read /mnt/memory/saturation-curve-analyst-memory/run_findings_20260806_v4.md
-(NOT the v3 file - v4 has the latest combined sample counts: 29 valid
-users as of 2026-08-06. Reading v3 would lose this run's progress.)
+Read /mnt/memory/saturation-curve-analyst-memory/run_findings_20260806_v5.md
+(NOT v3 or v4 - v5 has the latest combined sample counts: 64 valid
+users as of 2026-08-06. Reading an older file would lose progress.)
 Extract, for these 3 cells specifically (ignore the other 17 in the file):
-- Onboarding x >=3 UPI txns/30d (9 users, 205 user-days as of last run)
-- Veteran x >=3 UPI txns/30d (6 users, 170 user-days as of last run)
-- Veteran x >=40 UPI txns/30d (14 users, 348 user-days as of last run)
+- Onboarding x >=3 UPI txns/30d (26 users, 523 user-days as of last run)
+- Veteran x >=3 UPI txns/30d (11 users, 289 user-days as of last run)
+- Veteran x >=40 UPI txns/30d (27 users, 666 user-days as of last run)
 For each: the rq_id, the list/count of client_ids already retrieved,
 and which were already event-sampled. Trust the memory file's exact
 figures over any approximate numbers you may have been told - it is
 the source of truth.
+
+## Known API fix (from Run v5 - use this from the start, don't rediscover)
+get_user_events with an actions filter returns HTTP 500 without an
+explicit attributes projection. Add attributes: [{name: "moe_campaign_id",
+data_type: "string"}] to the payload to avoid the crash. While you're
+in there: check whether this projection also returns moe_campaign_tags
+in the response (a prior run found tags missing when using an actions
+filter without this projection) - if tags ARE present with this fix,
+note this explicitly, as it may unblock BU composition analysis in a
+future run.
 
 ## Steps
 
@@ -687,18 +736,25 @@ the source of truth.
    every run so far, not just this run's additions).
 
 4. Report the two direct comparisons using combined data:
-   - Onboarding >=3 vs Veteran >=3 (platform age effect)
-   - Veteran >=3 vs Veteran >=40 (activity level effect)
+   - Onboarding >=3 vs Veteran >=3 (platform age effect - has NOT
+     held up across runs so far, currently showing near-identical CTR;
+     keep checking as n grows rather than assuming it stays null)
+   - Veteran >=3 vs Veteran >=40 (activity level effect - HAS held up
+     and is stabilizing; this is the more trustworthy finding so far)
 
-5. Note any zero-event/anomalous users found (per the reachability
-   flag discovered in Run v4 - 33% zero-event rate in Veteran >=3).
-   Continue tracking this separately from valid samples.
+5. Note any zero-event/anomalous users found. Track separately per
+   cell (Run v5 found this is concentrated in Veteran-casual at ~31%,
+   NOT a general platform-age effect - Veteran-power shows only 10%).
+   Continue refining this per-cell, not as one blanket rate.
 
-6. SKIP BU composition and fatigue-flag analysis entirely - already
-   attempted and blocked/covered in prior runs.
+6. SKIP BU composition and fatigue-flag analysis entirely, UNLESS you
+   are specifically testing the attributes-projection fix noted above
+   for BU composition unblocking - if testing it, keep this limited
+   to a single small probe, do not let it consume budget meant for
+   Step 1-2 sampling.
 
 7. WRITE BACK to memory: create a new dated file (e.g.
-   run_findings_20260806_v5.md, or the actual current date if run on
+   run_findings_20260806_v6.md, or the actual current date if run on
    a later day) with the new combined sampling counts per cell, so
    the NEXT resume run knows which file to read.
 
