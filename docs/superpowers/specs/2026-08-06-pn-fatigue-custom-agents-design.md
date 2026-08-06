@@ -50,7 +50,7 @@ No Metabase dependency — everything above is queryable directly inside MoEngag
 | BU | Conversion event | Notes |
 |---|---|---|
 | Shop | `PAGE_VIEWED_SHOP` **filtered to** `PAGE_NAME` = `ORDER_CONFIRMATION` (Android) or `ORDER_STATUS` (iOS) | **Correction:** Agent 1's first run measured raw `PAGE_VIEWED_SHOP` (640,414 users/30d, ~4.3d gap) without this filter — that number is shop *browsing*, not completed orders. Must be re-measured with the attribute filter applied; expect a smaller population and longer median gap. |
-| RCBP | `TRANSACTION_STATUS_PAGE_RCBP` (Android) **OR** `RCBP_TRANSACTION_STATUS` (iOS) | **Android confirmed healthy** — manually verified in MoEngage Segmentation (2026-08-06): 132,718 users ≥1 time, 80,614 users ≥3 times in 30 days (61% repeat rate — one of the stronger retention signals of any BU). Agent 1's Run #1 "does not exist" finding was a false negative from that specific run, not a real gap. **iOS (`RCBP_TRANSACTION_STATUS`) still shows only 14 users in 30 days** — this side genuinely looks under-instrumented and is worth a BU-owner check, but Android (the majority of RCBP volume) is fine. |
+| RCBP | `TRANSACTION_STATUS_PAGE_RCBP` **OR** `RCBP_TRANSACTION_SUCCESS` (both confirmed valid payment events, BU-owner verified 2026-08-06) | **Confirmed healthy.** Manually verified in MoEngage Segmentation (2026-08-06): `TRANSACTION_STATUS_PAGE_RCBP` alone = 132,718 users ≥1/30d, 80,614 ≥3/30d (61% repeat rate — one of the stronger retention signals of any BU). `RCBP_TRANSACTION_SUCCESS` alone = 78,579 users. **Union (the correct conversion definition) = 133,126 users, 133,124 reachable** — the two events overlap almost completely (only +408 incremental users from the success event), confirming they represent the same underlying conversion from two tracking points. Agent 1's Run #1 "does not exist" finding was a false negative from that specific run, not a real gap. `RCBP_TRANSACTION_STATUS` (14 users/30d, previously assumed to be the "iOS" counterpart) is a separate, effectively dead/legacy event name — excluded from the conversion definition, flagged for BU-owner review as a possible cleanup item but not blocking anything. |
 | UPI Acquisition | `UPI_TRANSACTION_STATUS` where `IS_FIRST_TRANSACTION=TRUE` | Unchanged from original mapping |
 | UPI Retention | `UPI_TRANSACTION_STATUS` (all) | Unchanged. Confirmed healthy: 627,237 users/30d, ~4.5d median gap |
 | POPcard Acquisition | `MEDIA_CLICK` (Apply Now proxy) | Unchanged |
@@ -303,11 +303,15 @@ generalize from small samples.
 - Transaction tiers (confirmed stable across 2 runs): T1 Occasional 1-2
   txns (205,986 users), T2 Casual 3-9 (171,671), T3 Regular 10-39
   (157,391), T4 Power 40+ (92,189).
-- BU conversion events: same mapping as prior run (Shop = PAGE_VIEWED_SHOP
-  filtered to PAGE_NAME=ORDER_CONFIRMATION/ORDER_STATUS; RCBP =
-  TRANSACTION_STATUS_PAGE_RCBP (Android) OR RCBP_TRANSACTION_STATUS (iOS);
-  UPI Acquisition/Retention, POPcard Acquisition/Activation, Rupay
-  Acquisition/Activation, POPchop per prior confirmed definitions).
+- BU conversion events (RCBP corrected 2026-08-06, manually verified):
+  Shop = PAGE_VIEWED_SHOP filtered to PAGE_NAME=ORDER_CONFIRMATION/
+  ORDER_STATUS; RCBP = TRANSACTION_STATUS_PAGE_RCBP OR
+  RCBP_TRANSACTION_SUCCESS (both are valid payment events, confirmed
+  union = 133,126 users/30d - do NOT use RCBP_TRANSACTION_STATUS, that
+  is a separate near-dead event with only 14 users/30d, unrelated to
+  the real RCBP conversion signal); UPI Acquisition/Retention, POPcard
+  Acquisition/Activation, Rupay Acquisition/Activation, POPchop per
+  prior confirmed definitions.
 - KNOWN QUERY BUG: execution.count / at-least-N filters are silently
   ignored if placed at the event level - they must be placed in the
   SEGMENTATION filter. If any "at least N" result is not monotonically
