@@ -659,7 +659,19 @@ Both agents above are MoEngage no-code Custom Agents (Merlin AI Studio), not app
 
 ## 10. Next Actions (current status as of 2026-08-06)
 
-**Agent 1 has run 5 times.** Run v5 (resume-based) reached **64 valid users cumulative** across the same 3 cells (up from 29 after v4). Gap to the 100-user threshold is now ~36 (down from ~71). **Run v5's results were written to `run_findings_20260806_v5.md`** — any future resume run must read this file, not v4 or v3, or it will lose progress.
+### 🚩 UNRESOLVED — data integrity check pending (do not build further on v3/v4/v5 conclusions until this clears)
+
+Run v6 discovered it had inherited a wrong event-name shape from v5's memory file (`MOE_NOTIFICATION_RECEIVED_ANDROID`, which doesn't exist — burned ~74 wasted calls before self-correcting) and flagged that **v3/v4/v5's recv/click numbers might have used the same wrong shape**, which would put the "activity effect confirmed, age effect reversed" findings below in question. A small targeted verification (re-pull 3 already-sampled users with confirmed-correct event names, compare to historical recorded counts) has been requested but not yet run. **Treat everything below as provisional pending that verification** — do not treat "activity level matters more than age" as settled until this clears.
+
+**Also unresolved:** the exact correct event name for Android-received is ambiguous between runs — some reports say `NOTIFICATION_RECEIVED_MOE` (used consistently since Run 1), v6's own summary says `NOTIFICATION_RECEIVED` (no `_MOE` suffix, inconsistent with its siblings `NOTIFICATION_CLICKED_MOE`/`_IOS_MOE`). This must be nailed down to an exact, quoted string before further sampling, not approximated.
+
+### Real throughput finding from v6 (independent of the integrity question, this part is solid)
+
+The per-run ceiling isn't a fixed call-count or rate limit — it's **response payload size**. A single Veteran≥40 (power user) event-history response is 40-250 KB; batching 8-13 heavy users in one turn produces 1.5-2.5 MB, which exhausts context before any API-side limit. Light-activity cells (Onboarding) likely allow much higher per-run throughput than heavy cells (Veteran-power). Future runs should batch heavy cells in small groups (4-6) and can push harder on light cells — the ceiling is cell-dependent, not a single global number.
+
+---
+
+**Agent 1 has run 6 times.** Run v5 (resume-based) reached **64 valid users cumulative** across the same 3 cells (up from 29 after v4); Run v6 added ~11 more (~75 total) but is under the data-integrity cloud above. Gap to the 100-user threshold, once integrity is confirmed, is roughly ~25-36. **Run v6's results were written to `run_findings_20260806_v6.md`** — any future resume run must read this file, not v5 or earlier, or it will lose progress (but see integrity caveat above before trusting its cumulative counts).
 
 **Important finding from v5: one of the two comparisons reversed.** The "platform age matters" conclusion from v4 (Onboarding more saturated than Veteran-casual) did NOT hold up with more data — CTR is now statistically indistinguishable between them (0.48% vs 0.49%). The "activity level matters" conclusion DID hold up and stabilized (ratio narrowed from ~10x to ~5.8x, direction unchanged) — this is the more trustworthy finding going forward. Agent 2's seed data and proxy-cell rule (Section 5 above) have been updated accordingly — activity tier now weighted more heavily than platform age when picking proxy values for unmeasured cells.
 
