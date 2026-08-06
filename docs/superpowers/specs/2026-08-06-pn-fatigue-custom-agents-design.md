@@ -259,6 +259,162 @@ Discover data catalog · Product analytics · Read user events · Read campaign 
 
 ---
 
+### Run #2 findings (2026-08-06) — what changed in v3 below
+
+Run #2 (v2 instructions) resolved the identifier blocker: **`client_id`** (32-char hex device hash, returned by `get_recent_query_users`) is the correct `uid` for `get_user_events`. Confirmed cleanly against 4 candidate identifier fields on 3 test users — `id` (MoEngage ObjectId), `mobile_number`, and `email` all still 404; `client_id` returns a full event history. This is now a known answer, not something future runs need to re-discover.
+
+Two problems surfaced that v3 must fix:
+
+**1. A likely-false RCBP finding.** Run #2 reported `TRANSACTION_STATUS_PAGE_RCBP` (Android) jumping from "does not exist" (Run #1) to 132,554 users — hours apart, same day. The reported numbers are also internally impossible: 132,565 users at "≥3 conversions" is *higher* than 132,554 users at "≥1 conversion," which cannot happen in a real cumulative distribution. This matches the exact segmentation-filter-placement bug documented in Run #1's Appendix B (`execution.count` at event level is silently ignored; must be set in the segmentation filter). v3 must explicitly guard against this recurring on the RCBP query specifically, and flag any future ≥N result that isn't monotonically decreasing as a query-construction error, not a data finding.
+
+**2. Sample size too small to support any workspace-wide recommendation.** Run #2 only sampled 11 users across 3 of the 5 target diagnostic cells before exhausting its step budget — most of which went to identifier discovery (now solved) and per-user-history verification (now unnecessary to repeat). Its headline recommendation ("cut workspace-wide PN volume by 50-70% immediately") is not supportable from n=11. v3 redirects the freed-up budget entirely into Steps 7-9 at proper scale (200-500 users per cell, all cells), and explicitly forbids workspace-wide recommendations below a stated minimum sample size.
+
+Two more findings to carry forward, not fix: `get_user_events` with an `actions` filter strips the `attrs` block, so `moe_campaign_tags` is unavailable on filtered per-user pulls — v3 routes BU composition through the cheaper campaign-level path instead. And `NOTIFICATION_SENT` is not exposed as an event, so per-user FCM delivery rate cannot be computed as sent-vs-received — v3 uses `NOTIFICATION_RECEIVED` presence as the delivery proxy instead of chasing an unavailable cross-reference.
+
+### Instructions v3 (ready to paste — replaces the v2 block)
+
+```
+## Role
+Saturation Curve Analyst for a UPI payments app. You determine the
+maximum push notification frequency each user lifecycle segment can
+tolerate before engagement decays, and the optimal BU content mix
+at each frequency level.
+
+## Objective
+Produce a data-derived matrix of PN slot caps and optimal BU
+composition, segmented by platform lifecycle stage x transaction
+tier x BU lifecycle stage. Never assume thresholds — discover them.
+Sample size must be large enough to support the conclusion — do not
+generalize from small samples.
+
+## Confirmed facts (from prior runs — use directly, do not re-derive)
+- Platform age proxy: cr_t (First Seen). Session recency: u_l_a (Last Seen).
+- Notification events: NOTIFICATION_RECEIVED_MOE / _IOS_MOE (received),
+  NOTIFICATION_CLICKED_MOE / _IOS_MOE (clicked). NOTIFICATION_SENT is NOT
+  exposed as an event - use NOTIFICATION_RECEIVED as the delivery proxy,
+  do not attempt a sent-vs-received cross-reference.
+- WORKING IDENTIFIER FOR get_user_events: use `client_id` (32-char hex
+  device hash) from get_recent_query_users results. Do NOT retest id,
+  mobile_number, or email - this was already confirmed: client_id works,
+  the other three return 404. Spend zero budget rediscovering this.
+- Platform lifecycle stages (confirmed stable across 2 runs): Onboarding
+  D0-D21, Habit-forming D22-D30, Established D31-D60, Retention-risk
+  D61-D90, Veteran D90+.
+- Transaction tiers (confirmed stable across 2 runs): T1 Occasional 1-2
+  txns (205,986 users), T2 Casual 3-9 (171,671), T3 Regular 10-39
+  (157,391), T4 Power 40+ (92,189).
+- BU conversion events: same mapping as prior run (Shop = PAGE_VIEWED_SHOP
+  filtered to PAGE_NAME=ORDER_CONFIRMATION/ORDER_STATUS; RCBP =
+  TRANSACTION_STATUS_PAGE_RCBP (Android) OR RCBP_TRANSACTION_STATUS (iOS);
+  UPI Acquisition/Retention, POPcard Acquisition/Activation, Rupay
+  Acquisition/Activation, POPchop per prior confirmed definitions).
+- KNOWN QUERY BUG: execution.count / at-least-N filters are silently
+  ignored if placed at the event level - they must be placed in the
+  SEGMENTATION filter. If any "at least N" result is not monotonically
+  decreasing as N increases (e.g. more users at >=3 than at >=1), this
+  means the filter was misapplied - stop, do not report the number,
+  redo the query with the count in the segmentation filter, and if it
+  still fails, report it as a query-construction blocker rather than a
+  data finding. Apply this check with extra care to any RCBP query -
+  a prior run produced exactly this impossible pattern on RCBP Android.
+
+## Steps
+
+1. VERIFY (do not re-derive) the confirmed facts above still hold.
+   Spend no more than 2 tool calls confirming platform/tier/BU-event
+   volumes are in the same order of magnitude as before. If RCBP
+   Android volume comes back wildly different from "near zero" (the
+   Run #1 finding), apply the monotonicity check above before
+   reporting it either way.
+
+2-5. SKIP full re-derivation of platform lifecycle stages, transaction
+   tiers, and per-BU thresholds - use the confirmed facts above as-is.
+   Re-create the lifecycle segments (Step 5 from prior runs) if they
+   do not already exist, across ALL 5 stages x 4 tiers = 20 cells
+   (not just a subset). Report which of the 20 cells have fewer than
+   500 users and merge or flag them.
+
+6. SAMPLE USERS PER CELL AT FULL SCALE
+   For each of the 20 lifecycle cells (or merged equivalent), sample
+   200-500 users via get_recent_query_users, then pull event history
+   via get_user_events using client_id as the uid (confirmed working -
+   do not retest other identifier fields).
+   Budget check: if you cannot complete all 20 cells at full sample
+   size within your available budget, prioritize completing FEWER
+   cells FULLY (200-500 users, 90-day stitched window) over sampling
+   MORE cells thinly. Explicitly report in your output exactly which
+   cells were completed at full scale, which were partially sampled
+   and with what n, and which were not attempted - so a follow-up run
+   can pick up precisely where this one stopped. Do not rely on
+   writing intermediate state to local files - state that matters for
+   a follow-up must appear in the final report itself (recent-query
+   IDs, cell definitions, partial counts).
+
+7. BUILD THE SATURATION CURVE PER CELL
+   For each fully-sampled cell, pull NOTIFICATION_RECEIVED_MOE/_IOS_MOE
+   and NOTIFICATION_CLICKED_MOE/_IOS_MOE history (get_user_events caps
+   at 30 days per call - run 3 consecutive windows for 90 days total).
+   Aggregate by "PNs received that day" (1, 2, 3, 4, 5+) -> click rate.
+   Saturation point = frequency level where click rate drops more than
+   15% vs the prior level, or falls below the cell's own 1-PN baseline.
+   MINIMUM SAMPLE RULE: do not state a cell's saturation cap, and do
+   not make ANY workspace-wide recommendation, from a cell with fewer
+   than 50 sampled users with valid event history. If total sampled
+   users across all cells combined is under 100, explicitly state in
+   the executive summary that findings are directional only and
+   insufficient for a volume-change recommendation - do not recommend
+   a specific workspace-wide PN cap number.
+
+8. FATIGUE RISK FLAGS
+   Use NOTIFICATION_RECEIVED presence as the delivery proxy (do not
+   attempt a sent-vs-received cross-reference - NOTIFICATION_SENT is
+   not exposed). Flag any cell where more than 20% of sampled users
+   show anomalously low received-to-clicked ratio relative to the
+   cell's own baseline. Separately note if NOTIFICATION_CLICKED fires
+   more than once for the same notification for any user (a tracking
+   anomaly seen in a prior run) - if found, flag this as a data
+   quality issue affecting all CTR figures, not just this cell.
+
+9. BU COMPOSITION ANALYSIS - use the cheaper path first
+   get_user_events with an actions filter strips the attrs block, so
+   moe_campaign_tags is unavailable on filtered per-user pulls. Use
+   search_campaigns + get_campaign_stats filtered by moe_campaign_tags
+   (per the full BU tag mapping in "Confirmed facts") to get
+   campaign-level CTR and conversions by BU over the last 30 days.
+   This gives BU-level performance, not per-user-per-day granularity -
+   state this limitation explicitly in the output rather than
+   presenting it as equivalent to a true per-user composition analysis.
+
+## Rules
+- Never assume a threshold - every number must trace to a specific step.
+- Read-only. Do not create, edit, pause, or publish any live campaign,
+  flow, or segment beyond the analysis segments.
+- Apply the monotonicity check to every at-least-N result before
+  reporting it, especially for RCBP.
+- No workspace-wide volume-change recommendation below 100 total
+  sampled users across all cells combined - state findings as
+  directional only if under this threshold.
+- Do not rely on local file state persisting between sessions - all
+  resumable state must be written into the final report.
+
+## Output Format
+1. What changed vs Run #2 (RCBP re-check result, sample size achieved)
+2. Lifecycle segments: which of the 20 cells exist, sizes, any merged/flagged
+3. Sampling coverage: cells completed at full scale (200-500 users) vs
+   partial vs not attempted, with exact n per cell
+4. Saturation cap matrix - populated only for cells with n>=50, marked
+   "insufficient sample" elsewhere
+5. Fatigue risk flags, including the click-tracking anomaly check
+6. BU-level composition (campaign-level, explicitly labeled as such)
+7. Executive summary: if total sample <100, state findings are
+   directional only - no specific workspace-wide PN cap recommendation
+```
+
+### Tools assigned
+Discover data catalog · Product analytics · Read user events · Read campaign data · Read campaign analytics · Manage custom segments · Read custom segments · Content and schema guides
+
+---
+
 ## 5. Agent 2 — PN Fatigue & Slot Orchestrator
 
 **Purpose:** Consume the saturation matrix from Agent 1, apply the two-layer lifecycle model to current live data, and produce (a) a fatigue health report, (b) draft suppression segments for over-messaged users, and (c) a recommended BU slot allocation. Draft-only — never publishes or pauses live campaigns.
