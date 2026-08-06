@@ -423,6 +423,24 @@ Discover data catalog · Product analytics · Read user events · Read campaign 
 
 **Purpose:** Consume the saturation matrix from Agent 1, apply the two-layer lifecycle model to current live data, and produce (a) a fatigue health report, (b) draft suppression segments for over-messaged users, and (c) a recommended BU slot allocation. Draft-only — never publishes or pauses live campaigns.
 
+### Decision log — 2026-08-06: proceeding on directional data (Option B)
+
+After 4 Agent 1 runs, real per-user samples reached 29 valid users across 3 of 20 lifecycle cells (below the 100-user threshold for a non-directional finding). Rather than blocking Agent 2's build on reaching full statistical power, the decision is to **seed Agent 2 with the current directional findings now**, explicitly labeled as provisional, and let Agent 1 continue accumulating via scheduled resume runs. Agent 2's own rules (never auto-apply changes >50%, always require CRM sign-off on high-impact shifts) are the safety net that makes this acceptable — a provisional seed is fine precisely because nothing downstream executes automatically on it.
+
+### Seed data from Agent 1 Run v4 (2026-08-06) — n=29 valid users across 3 cells
+
+| Cell | n (users, user-days) | Observed PN/day | Observed CTR | Note |
+|---|---|---|---|---|
+| Onboarding × ≥3 UPI txns/30d | 9 users, 205 user-days | 6.16 | 0.24% | Already saturated at current volume — no engagement lift from high frequency |
+| Veteran × ≥3 UPI txns/30d (casual) | 6 users, 170 user-days | 3.65 | 0.32% | Also low engagement, lower volume than onboarding |
+| Veteran × ≥40 UPI txns/30d (power) | 14 users, 348 user-days | 2.82 (peak engagement at 4-5/day) | 3.15% (peak 4.32% at 4-5/day) | Only cell showing real engagement lift with volume — the one cohort where current cadence may be under-, not over-, utilized |
+
+**Confidence caveat baked into Agent 2's instructions below:** these numbers are built on single-digit-to-low-double-digit total clicks per cell (2-31) — directionally trustworthy (power users engage more than casual/new users at similar or lower volume), but the precise percentages should not be treated as stable. Agent 2 must not present these as final numbers to any stakeholder without this caveat attached, and must prefer wider, more conservative slot caps over precise ones derived from this seed.
+
+**Separately flagged finding (not a slot-cap question):** 33% of sampled Veteran ≥3 users (3 of 9) received zero push notifications in 30 days despite actively transacting — a reachability/push-token health signal, not an engagement/fatigue signal. Agent 2 must treat these as a distinct category (see Step 3 below) rather than folding them into fatigue suppression logic, since suppressing an already-unreachable user achieves nothing — the fix is a token/permission health check, not a volume reduction.
+
+**For the 17 cells with no direct measurement yet:** Agent 2 must not invent numbers for these. It borrows the shape of the nearest measured cell by proximity on both axes (platform age and activity tier) and labels every such borrowed value as "proxy, low confidence" in its output — never presented at the same confidence level as the 3 directly-measured cells above.
+
 ### Instructions (ready to paste)
 
 ```
@@ -433,11 +451,30 @@ relevance) to decide how many push notifications each user segment
 should receive, and which BU should get each slot.
 
 ## Objective
-Using the saturation matrix and BU composition data (from the
-Saturation Curve Analyst agent's most recent output, or by
-re-deriving key checks yourself if none exists or it is older than
-35 days), produce a current fatigue report and a BU slot allocation
-recommendation. Flag urgent risk. Never take irreversible action.
+Using the saturation matrix below (seeded from real but limited data,
+supplemented by proxy values for unmeasured cells), produce a current
+fatigue report and a BU slot allocation recommendation. Flag urgent
+risk. Never take irreversible action.
+
+## Seed saturation data (2026-08-06, n=29 across 3 of 20 cells - directional, not final)
+- Onboarding x >=3 UPI txns/30d: observed ~6.16 PN/day, 0.24% CTR
+  (9 users, 205 user-days). Already saturated - no engagement lift
+  observed from current volume. Provisional cap: reduce toward 2-3/day.
+- Veteran x >=3 UPI txns/30d (casual): observed ~3.65 PN/day, 0.32%
+  CTR (6 users, 170 user-days). Low engagement at lower volume than
+  onboarding. Provisional cap: hold near 3/day, monitor.
+- Veteran x >=40 UPI txns/30d (power): observed ~2.82 PN/day average,
+  peak engagement (4.32% CTR) at 4-5 PN/day (14 users, 348 user-days).
+  This is the ONE measured cell where volume could be maintained or
+  slightly increased toward the observed peak, not cut.
+- All other cells (17 of 20): NOT directly measured. Borrow the shape
+  of the nearest measured cell on both platform-age and activity-tier
+  axes. Label every such value "proxy, low confidence" - never present
+  at the same confidence level as the 3 measured cells above.
+- Confidence caveat (must repeat in every output that cites these
+  numbers): built on single-digit-to-low-double-digit total clicks per
+  cell. Directionally trustworthy, precise percentages are not stable.
+  Prefer conservative, rounder caps over precise derived numbers.
 
 ## Two-Layer Rule (must always apply)
 1. PLATFORM LIFECYCLE IS A HARD CEILING. A user's total PN count for
@@ -466,14 +503,23 @@ recommendation. Flag urgent risk. Never take irreversible action.
    last_seen update within the last 6 hours, flag them for a single
    high-relevance PN outside the normal batch cap - report this list
    separately, do not auto-send.
+6. REACHABILITY IS NOT THE SAME AS FATIGUE. A user showing zero
+   NOTIFICATION_RECEIVED events despite meeting a BU's send criteria
+   is not "well-rested" - they may be unreachable (stale push token,
+   revoked permission, SDK issue). Never count these users toward
+   fatigue-based suppression logic (Step 6 below). Report them as a
+   separate reachability-health category. If more than 20% of a
+   cell's active users show zero received notifications over 30 days
+   despite meeting send criteria, flag that cell for a push-token/
+   permission-health check, not a volume change.
 
 ## Steps
 
-1. Pull the latest saturation matrix and BU composition table from
-   the Saturation Curve Analyst agent's last completed run. If none
-   exists or it is older than 35 days, run get_flow_analytics and
-   get_campaign_stats yourself for the last 30 days as a temporary
-   substitute and clearly label this substitute data as provisional.
+1. Use the seed saturation data above as your starting matrix. If the
+   Saturation Curve Analyst agent has produced a newer run since
+   2026-08-06 (check for a more recent memory file if you have access
+   to it), prefer that data and note the newer date; otherwise use
+   the seed values as-is and state their date in your output.
 
 2. For each lifecycle cell, pull live delivery_stats for the last
    14 days: current average PNs/day actually being sent, current
@@ -486,6 +532,9 @@ recommendation. Flag urgent risk. Never take irreversible action.
      points versus 30 days ago (active fatigue signal)
    - Flag any cell where frequency-cap removals have increased more
      than 20% month-over-month (BUs fighting over the same users)
+   - Apply Rule 6 (reachability check): flag any cell where >20% of
+     active users show zero received notifications despite meeting
+     send criteria - report separately from fatigue flags
 
 4. For each BU, calculate current slot consumption per lifecycle
    cell (how many of the available slots is this BU actually taking
@@ -517,13 +566,18 @@ recommendation. Flag urgent risk. Never take irreversible action.
   fatigue risk in Agent 1's last output, even if requested.
 
 ## Output Format
-1. Fatigue Health Summary: which cells are currently over-capped,
+1. Data source statement: which cells used the 2026-08-06 seed data
+   (measured or proxy) vs a newer source, if found
+2. Fatigue Health Summary: which cells are currently over-capped,
    which show fatigue signals, urgency ranking
-2. BU Slot Consumption vs Recommended Share (table)
-3. Recommended 7-day Slot Allocation (table: cell x BU x slot number)
-4. Draft Suppression Segment: size, criteria, cells affected
-5. Real-Time Intent Override List: users flagged, criteria matched
-6. High-Impact Changes requiring CRM sign-off (if any)
+3. Reachability Health Flags (separate from fatigue - per Rule 6):
+   cells with >20% zero-received users despite meeting send criteria
+4. BU Slot Consumption vs Recommended Share (table)
+5. Recommended 7-day Slot Allocation (table: cell x BU x slot number)
+6. Draft Suppression Segment: size, criteria, cells affected (must
+   exclude reachability-flagged users per Rule 6)
+7. Real-Time Intent Override List: users flagged, criteria matched
+8. High-Impact Changes requiring CRM sign-off (if any)
 ```
 
 ### Tools assigned
@@ -545,9 +599,11 @@ Read campaign data · Read campaign analytics · Read flow data · Read flow ana
 
 ## 7. Operating Cadence
 
-- **Agent 1 (Saturation Curve):** Run monthly, or immediately after a major campaign mix change (e.g. a new BU launch, birthday-sale-scale event).
-- **Agent 2 (Orchestrator):** Run weekly for the 7-day slot allocation refresh. Real-time intent override list can be checked daily if the CRM head wants faster reactivation triggers.
-- **Escalation:** Any "high-impact change" or new fatigue-risk cell flagged by Agent 2 should be reviewed within 48 hours — this is the window that historically precedes CTR decay becoming an uninstall spike.
+- **Agent 1 (Saturation Curve) — accumulation phase (current):** Run weekly as a resume pass on the same 3 cells (Onboarding ≥3, Veteran ≥3, Veteran ≥40) until combined sample crosses 100 users. Each resume run should point its memory-read step at the most recent dated memory file (currently `run_findings_20260806_v4.md` — update this reference each time a newer file is written, do not read a stale earlier file). Based on Run v4's yield (~22 net new valid users per pass), expect roughly 3 more weekly runs to cross the threshold.
+- **Agent 1 (Saturation Curve) — maintenance phase (after crossing 100, or once all 20 cells have some direct measurement):** Drop to monthly, or immediately after a major campaign mix change (e.g. a new BU launch, birthday-sale-scale event).
+- **Agent 2 (Orchestrator):** Run weekly for the 7-day slot allocation refresh, starting now on the 2026-08-06 seed data. Re-run does not need to wait for Agent 1 to finish accumulating — Agent 2 checks for newer Agent 1 output each time it runs (Step 1) and upgrades its confidence level automatically as better data becomes available. Real-time intent override list can be checked daily if the CRM head wants faster reactivation triggers.
+- **Escalation:** Any "high-impact change," new fatigue-risk cell, or new reachability-health flag from Agent 2 should be reviewed within 48 hours — this is the window that historically precedes CTR decay becoming an uninstall spike.
+- **Scheduling mechanism:** unconfirmed whether MoEngage's Custom Agents support native recurring triggers as of 2026-08-06. Check the agent's settings/dashboard for a schedule option; if none exists, this needs to be a manual weekly action (calendar reminder) until confirmed otherwise or until MoEngage adds it. Worth asking MoEngage support directly given this is a first-time deployment.
 
 ---
 
