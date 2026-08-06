@@ -627,10 +627,20 @@ Both agents above are MoEngage no-code Custom Agents (Merlin AI Studio), not app
 
 **Agent 1 has run 4 times.** Run v4 (resume-based) reached 29 valid users across 3 of 20 cells. Decision made: proceed with Agent 2 (Section 5) using this as seed data (Option B), while Agent 1 keeps accumulating in parallel via weekly resume runs. **Agent 1's v4 results were written to a NEW memory file (`run_findings_20260806_v4.md`), separate from v3's file** — any future resume run must read the v4 file, not v3, or it will work from stale counts (8 users, not 29).
 
+**Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. Awaiting CRM sign-off decision on that recommendation.
+
+### 🚩 New MoEngage issue to raise: Agent 2's tools uniformly denied
+
+Every tool assigned to Agent 2 (campaign search, campaign stats, delivery stats, behavior analysis, segment listing/creation, dashboards, flows — read AND write) returned "Permission to use … has been denied" in its first test run, despite Agent 1 (same workspace) successfully using equivalent read tools across 4 runs. This looks like a role/permission-grant gap specific to this agent's execution context, not a tool-selection or instruction problem. Action: check Settings → Team/Roles for the account running Agent 2 (Campaign Read, Analytics Read, Segment Read/Manage, Flow Read); if all present and it still fails, raise directly with MoEngage support — ask whether Agentic AI/Custom Agents requires a separate permission grant beyond builder-UI access.
+
+**Also found during Agent 2's build:** the tool picker added "Create campaign drafts" and "Edit campaigns" (write tools) beyond the 10 read-only tools specified in Section 5's instructions — "Edit campaigns" can modify live campaign content/schedule/audience. Strip these back to exactly the 10 listed in Section 5 before the permissions issue is resolved and the agent starts actually executing.
+
 **What's actually needed right now:**
 
-1. **Build Agent 2** using the Instructions block in Section 5 above — not yet done as of this writing.
-2. **Run Agent 1 approximately 3 more times** (weekly cadence) using Instructions v5 below, to push the 3-cell sample past the 100-user threshold. This runs independently of Agent 2 — Agent 2 checks for newer Agent 1 data each time it runs and upgrades automatically.
+1. ~~Build Agent 2~~ — done (2026-08-06), blocked on permissions per above.
+2. **Fix Agent 2's permissions + tool list**, then re-run it — no instruction changes needed, the logic is validated.
+3. **Run Agent 1 approximately 3 more times** (weekly cadence) using Instructions v5 below, to push the 3-cell sample past the 100-user threshold. This runs independently of Agent 2 — Agent 2 checks for newer Agent 1 data each time it runs and upgrades automatically.
+4. **Decide on the Onboarding × Active/Regular sign-off** (6→3, or ramped 6→4→3) — can happen now on provisional data or after live-tool access is restored, CRM head's call.
 
 ### Instructions v5 (ready to paste — same 3-cell resume pattern as v4, corrected to read the v4 memory file)
 
