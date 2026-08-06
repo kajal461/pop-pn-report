@@ -659,11 +659,24 @@ Both agents above are MoEngage no-code Custom Agents (Merlin AI Studio), not app
 
 ## 10. Next Actions (current status as of 2026-08-06)
 
-### 🚩 UNRESOLVED — data integrity check pending (do not build further on v3/v4/v5 conclusions until this clears)
+### ✅ RESOLVED — data integrity check complete
 
-Run v6 discovered it had inherited a wrong event-name shape from v5's memory file (`MOE_NOTIFICATION_RECEIVED_ANDROID`, which doesn't exist — burned ~74 wasted calls before self-correcting) and flagged that **v3/v4/v5's recv/click numbers might have used the same wrong shape**, which would put the "activity effect confirmed, age effect reversed" findings below in question. A small targeted verification (re-pull 3 already-sampled users with confirmed-correct event names, compare to historical recorded counts) has been requested but not yet run. **Treat everything below as provisional pending that verification** — do not treat "activity level matters more than age" as settled until this clears.
+Verification re-pulled 4 already-sampled users from v3's records using the same event names and got matching counts (small drift on 2, explained by new pushes arriving since original sampling — not an error). **v3/v4/v5 are confirmed clean and trustworthy.** The "activity effect confirmed, age effect reversed" findings below stand.
 
-**Also unresolved:** the exact correct event name for Android-received is ambiguous between runs — some reports say `NOTIFICATION_RECEIVED_MOE` (used consistently since Run 1), v6's own summary says `NOTIFICATION_RECEIVED` (no `_MOE` suffix, inconsistent with its siblings `NOTIFICATION_CLICKED_MOE`/`_IOS_MOE`). This must be nailed down to an exact, quoted string before further sampling, not approximated.
+**v6 is confirmed contaminated on Android only** — it used `NOTIFICATION_RECEIVED` (a generic app-side tracked event, category "Tracked User Events," fires ~4-5× more often than actual campaign receipts) instead of the correct `NOTIFICATION_RECEIVED_MOE`. Its iOS sampling was correct (used `NOTIFICATION_RECEIVED_IOS_MOE` properly) but the verification's own recommendation is to discard v6's contribution entirely rather than try to salvage an iOS-only subset, given ambiguity in how many of its ~11 new users were Android vs iOS. **Reverting the cumulative count to v3+v4+v5's 64 valid users — v6's ~11 do not count.**
+
+**Confirmed canonical event names (now also written to a shared, workspace-level file, not just per-run memory):**
+- `NOTIFICATION_RECEIVED_MOE` — Android received (Campaign Activity, has `moe_campaign_id`)
+- `NOTIFICATION_RECEIVED_IOS_MOE` — iOS received (Campaign Activity, has `moe_campaign_id`)
+- `NOTIFICATION_CLICKED_MOE` — Android clicked (Campaign Activity, has `moe_campaign_id`)
+- `NOTIFICATION_CLICKED_IOS_MOE` — iOS clicked (Campaign Activity, has `moe_campaign_id`)
+- **Do NOT use** `NOTIFICATION_RECEIVED` (no suffix) — real event, wrong metric, not a MoEngage campaign signal
+
+**Two-tier memory now in use, worth preserving in all future instructions:**
+- `/mnt/memory/tenant-poptech-growth-shared-memory/data_catalog.md` — shared, workspace-wide schema/event-name ground truth (now corrected, includes an explicit warning against `NOTIFICATION_RECEIVED`)
+- `/mnt/memory/saturation-curve-analyst-memory/run_findings_YYYYMMDD_vN.md` — per-run sampling progress for the 3 tracked cells
+
+Pointing future runs at the shared data catalog for event names (rather than trusting whatever a prior run's own memory file happened to record) should prevent this exact failure mode from recurring — a bad hint in one run's memory no longer has a path to silently propagate into the next.
 
 ### Real throughput finding from v6 (independent of the integrity question, this part is solid)
 
@@ -671,7 +684,7 @@ The per-run ceiling isn't a fixed call-count or rate limit — it's **response p
 
 ---
 
-**Agent 1 has run 6 times.** Run v5 (resume-based) reached **64 valid users cumulative** across the same 3 cells (up from 29 after v4); Run v6 added ~11 more (~75 total) but is under the data-integrity cloud above. Gap to the 100-user threshold, once integrity is confirmed, is roughly ~25-36. **Run v6's results were written to `run_findings_20260806_v6.md`** — any future resume run must read this file, not v5 or earlier, or it will lose progress (but see integrity caveat above before trusting its cumulative counts).
+**Agent 1 has run 6 times; v6 discarded due to contamination.** Trusted cumulative remains **64 valid users** (v3+v4+v5) across the 3 tracked cells. Gap to the 100-user threshold is ~36. **The next resume run should read `run_findings_20260806_v5.md`** (the last clean file, NOT v6) and additionally read the shared `data_catalog.md` for event-name ground truth before doing anything else.
 
 **Important finding from v5: one of the two comparisons reversed.** The "platform age matters" conclusion from v4 (Onboarding more saturated than Veteran-casual) did NOT hold up with more data — CTR is now statistically indistinguishable between them (0.48% vs 0.49%). The "activity level matters" conclusion DID hold up and stabilized (ratio narrowed from ~10x to ~5.8x, direction unchanged) — this is the more trustworthy finding going forward. Agent 2's seed data and proxy-cell rule (Section 5 above) have been updated accordingly — activity tier now weighted more heavily than platform age when picking proxy values for unmeasured cells.
 
@@ -693,7 +706,7 @@ The per-run ceiling isn't a fixed call-count or rate limit — it's **response p
 4. **Test the `attributes` projection fix specifically for BU composition** — if it restores `moe_campaign_tags`, this reopens Step 9 (BU composition analysis) which has been blocked since Run 3.
 5. **Re-decide on the Onboarding × Active/Regular sign-off** using Agent 2's next run (on Run v5 data), not the original Run v4-based recommendation — the underlying numbers changed materially.
 
-### Instructions v6 (ready to paste — same 3-cell resume pattern, corrected to read the v5 memory file)
+### Instructions v7 (ready to paste — resumes from the last CONFIRMED-CLEAN file, v6 discarded due to contamination)
 
 ```
 ## Role
@@ -705,30 +718,47 @@ working across sessions.
 Resume event-sampling on 3 already-provisioned cells to maximize new
 fully-sampled users this run, working toward crossing 100 total
 sampled users across the 3 cells combined - the threshold at which
-findings stop being directional-only. Currently at 64/100.
+findings stop being directional-only. Currently at 64/100 (v6's ~11
+additions were discarded after a data integrity check found they used
+a wrong event name for Android - see Step 0 below, this is fixed now).
 
-## Step 0 - READ MEMORY FIRST
-Read /mnt/memory/saturation-curve-analyst-memory/run_findings_20260806_v5.md
-(NOT v3 or v4 - v5 has the latest combined sample counts: 64 valid
-users as of 2026-08-06. Reading an older file would lose progress.)
-Extract, for these 3 cells specifically (ignore the other 17 in the file):
-- Onboarding x >=3 UPI txns/30d (26 users, 523 user-days as of last run)
-- Veteran x >=3 UPI txns/30d (11 users, 289 user-days as of last run)
-- Veteran x >=40 UPI txns/30d (27 users, 666 user-days as of last run)
-For each: the rq_id, the list/count of client_ids already retrieved,
-and which were already event-sampled. Trust the memory file's exact
-figures over any approximate numbers you may have been told - it is
-the source of truth.
+## Step 0 - READ MEMORY FIRST (two files, in this order)
+a. Read /mnt/memory/tenant-poptech-growth-shared-memory/data_catalog.md
+   FIRST. This is the shared, workspace-wide, verified event-name
+   ground truth - it was corrected on 2026-08-06 after a prior run
+   used a wrong event name. Trust THIS file for event names over
+   anything in a per-run memory file, in case a future run's own
+   memory ever contains a bad hint again.
+b. Read /mnt/memory/saturation-curve-analyst-memory/run_findings_20260806_v5.md
+   (NOT v6 - v6 was found contaminated on Android and its ~11 additions
+   were discarded. v5 has the last CONFIRMED-CLEAN combined sample
+   counts: 64 valid users as of 2026-08-06.)
+   Extract, for these 3 cells specifically (ignore the other 17 in the
+   file):
+   - Onboarding x >=3 UPI txns/30d (26 users, 523 user-days)
+   - Veteran x >=3 UPI txns/30d (11 users, 289 user-days)
+   - Veteran x >=40 UPI txns/30d (27 users, 666 user-days)
+   For each: the rq_id, the list/count of client_ids already retrieved,
+   and which were already event-sampled. Trust the memory file's exact
+   figures over any approximate numbers you may have been told.
 
-## Known API fix (from Run v5 - use this from the start, don't rediscover)
-get_user_events with an actions filter returns HTTP 500 without an
-explicit attributes projection. Add attributes: [{name: "moe_campaign_id",
-data_type: "string"}] to the payload to avoid the crash. While you're
-in there: check whether this projection also returns moe_campaign_tags
-in the response (a prior run found tags missing when using an actions
-filter without this projection) - if tags ARE present with this fix,
-note this explicitly, as it may unblock BU composition analysis in a
-future run.
+## Known API fixes (use these from the start, don't rediscover)
+- get_user_events with an actions filter returns HTTP 500 without an
+  explicit attributes projection. Add attributes: [{name:
+  "moe_campaign_id", data_type: "string"}] to the payload.
+- CONFIRMED event names (per shared data_catalog.md): NOTIFICATION_RECEIVED_MOE
+  (Android received), NOTIFICATION_RECEIVED_IOS_MOE (iOS received),
+  NOTIFICATION_CLICKED_MOE (Android clicked), NOTIFICATION_CLICKED_IOS_MOE
+  (iOS clicked). Do NOT use NOTIFICATION_RECEIVED (no suffix) - it is a
+  real but WRONG event (a generic app-side tracked event, not a
+  MoEngage campaign signal, fires ~4-5x more often and will inflate
+  your counts if used by mistake).
+- Response payload size, not call count, is the real per-run ceiling.
+  A single Veteran>=40 (power user) response can be 40-250KB. Batch
+  heavy-cell users (Veteran>=40) in small groups of 4-6, not 8-13+, to
+  avoid exhausting context before you can write findings back to
+  memory. Onboarding (lighter users) can likely be batched more
+  generously.
 
 ## Steps
 
@@ -739,8 +769,11 @@ future run.
 2. For each unsampled client_id, pull get_user_events for
    NOTIFICATION_RECEIVED_MOE, NOTIFICATION_RECEIVED_IOS_MOE,
    NOTIFICATION_CLICKED_MOE, NOTIFICATION_CLICKED_IOS_MOE - single
-   30-day window. Split budget roughly evenly across the 3 cells;
-   target at least 20-30 newly-sampled users per cell.
+   30-day window. Batch Veteran>=40 (heavy) users in groups of 4-6;
+   Onboarding and Veteran>=3 (lighter) users can likely be batched
+   more generously - push harder on light cells, more carefully on
+   heavy ones. Target at least 20-30 newly-sampled users per cell,
+   more if the lighter cells allow it without exhausting context.
 
 3. Aggregate per cell combining this run's new samples with ALL prior
    runs' samples for the same cell (do not discard prior data - add
@@ -766,9 +799,11 @@ future run.
    Step 1-2 sampling.
 
 7. WRITE BACK to memory: create a new dated file (e.g.
-   run_findings_20260806_v6.md, or the actual current date if run on
-   a later day) with the new combined sampling counts per cell, so
-   the NEXT resume run knows which file to read.
+   run_findings_20260806_v7.md, or the actual current date if run on
+   a later day) with the new combined sampling counts per cell. Before
+   writing, double check every event name used this run against the
+   shared data_catalog.md read in Step 0 - do not let a bad hint reach
+   the next run's memory file again.
 
 ## Rules
 - Do not rebuild any of the 3 cells' segment definitions.
