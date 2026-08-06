@@ -619,3 +619,102 @@ Read campaign data · Read campaign analytics · Read flow data · Read flow ana
 ## 9. Delivery Note
 
 Both agents above are MoEngage no-code Custom Agents (Merlin AI Studio), not application code. There is no software build step — the "implementation" is creating these two agents in the MoEngage UI with the instructions and tool assignments specified above, running Agent 1 first to populate the saturation matrix, then running Agent 2 against its output. No `writing-plans`/engineering implementation plan applies here since there is no codebase change in this repository as part of this design.
+
+---
+
+## 10. Next Actions (current status as of 2026-08-06)
+
+**Agent 1 has run 4 times.** Run v4 (resume-based) reached 29 valid users across 3 of 20 cells. Decision made: proceed with Agent 2 (Section 5) using this as seed data (Option B), while Agent 1 keeps accumulating in parallel via weekly resume runs. **Agent 1's v4 results were written to a NEW memory file (`run_findings_20260806_v4.md`), separate from v3's file** — any future resume run must read the v4 file, not v3, or it will work from stale counts (8 users, not 29).
+
+**What's actually needed right now:**
+
+1. **Build Agent 2** using the Instructions block in Section 5 above — not yet done as of this writing.
+2. **Run Agent 1 approximately 3 more times** (weekly cadence) using Instructions v5 below, to push the 3-cell sample past the 100-user threshold. This runs independently of Agent 2 — Agent 2 checks for newer Agent 1 data each time it runs and upgrades automatically.
+
+### Instructions v5 (ready to paste — same 3-cell resume pattern as v4, corrected to read the v4 memory file)
+
+```
+## Role
+Saturation Curve Analyst for a UPI payments app. This is a resume run
+- do not rebuild cells from scratch. Memory persistence is confirmed
+working across sessions.
+
+## Objective
+Resume event-sampling on 3 already-provisioned cells to maximize new
+fully-sampled users this run, working toward crossing 100 total
+sampled users across the 3 cells combined - the threshold at which
+findings stop being directional-only.
+
+## Step 0 - READ MEMORY FIRST
+Read /mnt/memory/saturation-curve-analyst-memory/run_findings_20260806_v4.md
+(NOT the v3 file - v4 has the latest combined sample counts: 29 valid
+users as of 2026-08-06. Reading v3 would lose this run's progress.)
+Extract, for these 3 cells specifically (ignore the other 17 in the file):
+- Onboarding x >=3 UPI txns/30d (9 users, 205 user-days as of last run)
+- Veteran x >=3 UPI txns/30d (6 users, 170 user-days as of last run)
+- Veteran x >=40 UPI txns/30d (14 users, 348 user-days as of last run)
+For each: the rq_id, the list/count of client_ids already retrieved,
+and which were already event-sampled. Trust the memory file's exact
+figures over any approximate numbers you may have been told - it is
+the source of truth.
+
+## Steps
+
+1. For each of the 3 cells, identify the UNSAMPLED client_ids from the
+   already-retrieved pool. If a cell's pool is exhausted, retrieve a
+   fresh batch of 30-50 more via get_recent_query_users for that cell.
+
+2. For each unsampled client_id, pull get_user_events for
+   NOTIFICATION_RECEIVED_MOE, NOTIFICATION_RECEIVED_IOS_MOE,
+   NOTIFICATION_CLICKED_MOE, NOTIFICATION_CLICKED_IOS_MOE - single
+   30-day window. Split budget roughly evenly across the 3 cells;
+   target at least 20-30 newly-sampled users per cell.
+
+3. Aggregate per cell combining this run's new samples with ALL prior
+   runs' samples for the same cell (do not discard prior data - add
+   to it). Report the true combined n per cell (cumulative across
+   every run so far, not just this run's additions).
+
+4. Report the two direct comparisons using combined data:
+   - Onboarding >=3 vs Veteran >=3 (platform age effect)
+   - Veteran >=3 vs Veteran >=40 (activity level effect)
+
+5. Note any zero-event/anomalous users found (per the reachability
+   flag discovered in Run v4 - 33% zero-event rate in Veteran >=3).
+   Continue tracking this separately from valid samples.
+
+6. SKIP BU composition and fatigue-flag analysis entirely - already
+   attempted and blocked/covered in prior runs.
+
+7. WRITE BACK to memory: create a new dated file (e.g.
+   run_findings_20260806_v5.md, or the actual current date if run on
+   a later day) with the new combined sampling counts per cell, so
+   the NEXT resume run knows which file to read.
+
+## Rules
+- Do not rebuild any of the 3 cells' segment definitions.
+- Do not re-sample a client_id already event-sampled in any prior run.
+- Report the TRUE cumulative n per cell (all runs combined), not just
+  this run's new samples in isolation.
+- If cumulative total across all 3 cells reaches 100+, state a
+  specific comparative finding rather than defaulting to
+  directional-only language. If still under 100, state findings as
+  directional per the standing rule.
+- Clearly state which memory file you read from and which new file
+  you wrote to, so the next run in this chain knows where to look.
+
+## Output Format
+1. Memory read confirmation: which file was read, exact rq_ids and
+   cumulative sample counts recovered for the 3 cells
+2. New samples added this run, per cell
+3. TRUE cumulative n per cell (all runs to date, combined)
+4. Per-cell saturation table: PN-count/day -> user-days -> click rate
+5. The two comparisons (age effect, activity effect) with cumulative data
+6. Whether the 100-user threshold was crossed
+7. Memory write-back confirmation - exact filename written, for the
+   next run in this chain to read
+```
+
+**Tools:** same as all prior Agent 1 runs — Discover data catalog · Product analytics · Read user events · Read campaign data · Read campaign analytics · Manage custom segments · Read custom segments · Content and schema guides.
+
+**After each run:** update this section's "Instructions v5" Step 0 to point at whichever new dated memory file was just written, before the next weekly run — otherwise each run will keep reading v4 and lose progress from the runs in between.
