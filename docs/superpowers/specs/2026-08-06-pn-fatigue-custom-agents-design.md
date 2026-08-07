@@ -722,7 +722,37 @@ The completed 2×2 grid (Habit-forming × Veteran, Casual × Power) shows a stri
 
 2. **Direct tension with an earlier finding that needs reconciling, not ignoring.** The Onboarding-vs-Veteran age effect on CTR was explicitly marked unresolved after 5 runs (flipped direction every time). Now Habit-forming-vs-Veteran shows a large, clean-looking age effect in one run. One possible reconciling hypothesis: early novelty (Onboarding, D0-21) may partially offset what would otherwise be a larger age-driven gap, and that novelty wears off by day 22-30 (Habit-forming) before habit/trust has built up, creating a real engagement trough. This is a plausible story, not a confirmed explanation — do not present it as fact.
 
-**Required next step: replicate Habit-forming×Casual and Habit-forming×Power with fresh independent pools** (same discipline as Veteran-casual) before this age-dominance claim goes into Agent 2's seed data or anywhere near a business conversation. Given live mode's ceiling is now solved, this should take 1-2 more runs, not 5.
+~~**Required next step: replicate Habit-forming×Casual and Habit-forming×Power with fresh independent pools**~~ — **done, see below (2026-08-07).**
+
+### Replication run results (2026-08-07): direction holds, headline magnitude softens
+
+Fresh, independent pools (client_ids excluded from the original run) sampled for both cells:
+
+| Cell | Original (single run) | Fresh, incl. outliers | Fresh, excl. outliers |
+|---|---|---|---|
+| HF × Casual | n=42, CTR 0.09% (already outlier-excluded) | n=44, mean 0.423% | n=39, **mean 0.086%** |
+| HF × Power | n=19, CTR ~0.20% | n=23, mean 0.469% | n=21, mean 0.258% |
+
+**Casual replicates almost exactly** on the apples-to-apples metric (0.086% fresh vs 0.09% original) — one of the cleanest replications in this project. **Power runs somewhat hotter fresh** (0.26-0.49% vs original 0.20%) — same order of magnitude and direction, but enough movement that the original "~12x" age-effect headline (Vet-Power 2.52% vs HF-Power 0.20%) softens to roughly **5-10x** once folded in. Same "moves but doesn't reverse" pattern seen with every other headline number in this project so far (activity-effect magnitude, reachability rate).
+
+**Most bulletproof number in the dataset: median CTR = 0.000% in BOTH fresh cells** (n=44 and n=23). Medians are outlier-proof by construction — more than half of sampled Habit-forming users get zero clicks regardless of averaging method.
+
+**Verdict: age-dominance direction holds, promote to "real, moderate-confidence signal" — still not confirmed enough to feed Agent 2** given it's now a 1-run replication, not the 5-run standard Veteran-casual needed.
+
+### 🚩 New confound discovered, unchecked in any prior run: platform (Android/iOS) may be a bigger driver than age or activity
+
+Both fresh cells show a large, consistent Android-vs-iOS CTR gap. Checked whether this is just the outliers talking (every outlier in both cells happens to be Android) by recomputing with outliers stripped:
+
+| Cell | Android, all | iOS, all | Ratio | Android, excl. outliers | iOS, excl. outliers | Ratio |
+|---|---|---|---|---|---|---|
+| HF-Power | 0.943% | 0.163% | 5.8x | 0.433% | 0.163% | **2.7x** |
+| HF-Casual | 0.969% | 0.117% | 8.3x | 0.328% | 0.117% | **2.8x** |
+
+It survives outlier removal — the raw 5.8-8.3x is inflated by the outliers (all Android, 2/2 and 5/5), but a real **~2.7-2.8x Android-over-iOS gap holds independently in both cells** even with them stripped out.
+
+**No run in this project — v3 through v9, either live-mode test — has ever reported a platform split for Onboarding or Veteran.** If those cells' samples skew differently by platform than Habit-forming's roughly 50/50 split, part of what's currently attributed to "age" could actually be platform mix. This potentially undercuts not just the age-dominance claim but every cross-cell comparison made in this spec so far.
+
+**Recommended next step, cheap — ahead of any further sampling:** the `plat` field was already captured in every prior pull, just never re-tabulated this way. Ask Agent 1 to re-read its existing Onboarding/Veteran-casual/Veteran-power memory files and split the ALREADY-SAMPLED users by platform — no new sampling required. Only if that's not recoverable from memory does this need a fresh run.
 
 **Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. **This specific recommendation was based on Run v4's now-superseded numbers — re-run Agent 2 once permissions are fixed so it picks up Run v5's revised seed data before finalizing the sign-off decision.**
 
