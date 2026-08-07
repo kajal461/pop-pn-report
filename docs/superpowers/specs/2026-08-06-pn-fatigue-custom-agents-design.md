@@ -860,6 +860,89 @@ c. Also read the latest Habit-forming files (Casual and Power,
 
 **Tools:** no changes needed to Agent 1's existing tool list — this run shouldn't end up calling the sampling-related ones (`get_recent_query_users`, `get_user_events`). If it does, that itself is useful information (means platform data isn't recoverable from memory).
 
+### Run v10 results (2026-08-07): outlier subgroup partly explained, age effect on Casual confirmed unconfounded, Power confound still unknown
+
+**Onboarding (7/31 tagged) and Vet-Power (9/31 tagged, Android n=2) — correctly declined rather than fabricated.** Consistent with the project's standing no-fabrication discipline. Both flagged "cannot characterize from memory, needs live re-pull" instead of forcing an answer from too-thin data.
+
+**New synthesis: the Veteran-casual outlier subgroup and the platform effect are related but not the same thing.** All 3 previously-flagged Veteran-casual outliers (Karthik ~36%, `aebafcac` ~41%+, `96331cbe` ~7.78%) are Android. But even with them removed, Android Vet-Casual still runs 1.219% vs iOS's 0.372% (3.27x) — a real general platform effect independent of the outliers. Since Android's *typical* CTR (1.2%) is nowhere near the outliers' 36-41%, platform explains the general Android tilt but not why those 3 are extreme even by Android standards. The outlier-subgroup question stays open, now sharper: check those 3 specifically for something beyond platform (device model, OS version, notification settings).
+
+**Reachable-pool baseline reveals a likely sampling bias, and it cuts in favor of the age effect being real.** Vet-Casual's true segment population is 82.0% Android; the tagged sample is only 58.6% (a 23pp gap — roughly 3.3 standard errors given n=29, ~1-in-1000 if sampling were platform-neutral). Reweighting Vet-Casual's CTR to the true 82% population (using its own Android/iOS CTRs) gives ~1.05%, vs HF-Casual's population-weighted ~0.18% (using its 59.2% baseline) — a **~5.9x gap, wider than the 4.34x the raw sample suggested.** Correcting for the sampling bias makes the age effect look bigger, not smaller. Caveat: the provenance of the reachable-pool percentages themselves (82.0%, 59.2%, 50.4%) wasn't stated by the agent and hasn't been independently confirmed as a real segment-level pull rather than an estimate — worth confirming before leaning on this further.
+
+**Verdict: HF-Casual vs Vet-Casual age comparison — NOT confounded by platform mix, likely understated if anything.** **HF-Power vs Vet-Power (the more dramatic 9.66x claim) — still completely unverified**, since 22 of 31 Vet-Power samples have no usable platform tag. This is now the single highest-priority open gap.
+
+### Instructions v11 (ready to paste — targeted platform re-pull for Vet-Power, no new users)
+
+```
+## Role
+Saturation Curve Analyst for a UPI payments app. This is a TARGETED
+re-pull for platform identification only - not a new sampling run. The
+22 users in scope are already counted in Vet-Power's existing 2.52%
+CTR headline (from v4/v5); this run does not add any new user to the
+cell, it only determines platform for users already in it.
+
+## Objective
+v10's memory re-tabulation found Vet-Power's platform mix uncheckable
+- only 9/31 already-sampled users had a platform tag (Android n=2, iOS
+n=7), too thin to trust. This is now the highest-priority gap: it
+blocks any confound-check on the most dramatic claim in the project
+(Vet-Power vs HF-Power, reported 9.66x age effect). Close it by
+determining platform for the 22 untagged users.
+
+## Step 0 - READ MEMORY FIRST
+a. Read /mnt/memory/tenant-poptech-growth-shared-memory/data_catalog.md
+   for verified event names.
+b. Read the Vet-Power source memory files (v4 and v5 contributions) and
+   extract the exact client_id list for the 22 users NOT already
+   platform-tagged (i.e. not among the 9 covered in the platform_split
+   file from the prior run). Confirm this is 22 and reconcile if it
+   isn't - v10 reported 31 total, 9 tagged, so 22 should remain.
+
+## Steps
+1. For each of the 22 client_ids, call get_user_events (with the
+   attributes projection fix: attributes: [{name: "moe_campaign_id",
+   data_type: "string"}]) and determine platform by which event pair
+   returns data - NOTIFICATION_RECEIVED_MOE/NOTIFICATION_CLICKED_MOE
+   (Android) or the _IOS_MOE pair (iOS).
+
+2. Record recv/click counts for each user. Compare against what's
+   already recorded for that client_id in the v4/v5 memory files - if
+   the counts don't match what's already on record, flag the
+   discrepancy explicitly rather than silently overwriting.
+
+3. Recompute Vet-Power's platform split using the FULL n=31 (not the
+   9-tagged subset) - Android vs iOS, n/recv/click/CTR, with and
+   without the cell's existing outlier flags applied.
+
+4. Redo the mix-adjustment arithmetic for Vet-Power vs HF-Power (47.6%
+   Android) using the now-complete mix instead of the unreliable
+   9-tagged subset. State plainly whether the 9.66x age effect holds,
+   shrinks, or is fully explained by platform mix.
+
+5. If budget allows after Vet-Power is fully resolved, do the same for
+   Onboarding's 24 untagged users (v4/v5 contributions) - lower
+   priority, since Onboarding's age effect is separately already
+   unresolved for other reasons, but useful to complete.
+
+## Rules
+- Do not add any user beyond the ones already in each cell's existing
+  sample - this closes a data gap on known users, it does not expand
+  the sample.
+- If a recv/click mismatch turns up against the existing memory record,
+  report it plainly - don't silently reconcile.
+
+## Output Format
+1. Vet-Power full platform split (n=31): Android vs iOS, n/recv/
+   click/CTR, with and without outliers
+2. Any recv/click discrepancies found vs existing memory records
+3. Updated mix-adjustment verdict: does the 9.66x Vet-Power/HF-Power
+   age effect survive, shrink, or get explained away by platform mix
+4. Onboarding split if budget allowed (secondary)
+5. Memory write-back: update platform_split_20260807.md with the now-
+   complete Vet-Power (and Onboarding, if done) coverage
+```
+
+**Tools:** same as Agent 1's existing list — this one does need `get_user_events` again, unlike v10.
+
 **Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. **This specific recommendation was based on Run v4's now-superseded numbers — re-run Agent 2 once permissions are fixed so it picks up Run v5's revised seed data before finalizing the sign-off decision.**
 
 ### 🚩 MoEngage issues to raise (running list)
