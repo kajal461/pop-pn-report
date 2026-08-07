@@ -445,15 +445,15 @@ Run v4's numbers below are kept for history but are now superseded — one of th
 
 | Cell | n (users, user-days) | Observed PN/day | Observed CTR | Note |
 |---|---|---|---|---|
-| Onboarding × ≥3 UPI txns/30d | 26 users, 523 user-days | 5.54 (peak 3/day) | 0.48% | **Age-effect finding REVERSED from Run v4** — CTR is now statistically indistinguishable from Veteran-casual (was 0.24% vs 0.32% at n=9/n=6, now 0.48% vs 0.49% at n=26/n=11). Platform age alone does not appear to predict engagement — treat the earlier "onboarders are more saturated" narrative as noise, not signal. |
-| Veteran × ≥3 UPI txns/30d (casual) | 11 users, 289 user-days | 3.52 (peak 4-5/day) | 0.49% | Consistent with Onboarding≥3 now — age effect not holding up |
-| Veteran × ≥40 UPI txns/30d (power) | 27 users, 666 user-days | 3.24 (peak 4-5/day) | 2.83% (peak 3.79% at 4-5/day) | **This finding IS holding up and stabilizing** — ratio vs Veteran-casual narrowed from ~10x (Run v4) to ~5.8x (Run v5) as expected with more data, but direction is consistent and reproducing. Activity level, not platform age, is the more trustworthy predictor of PN engagement tolerance found so far. |
+| Onboarding × ≥3 UPI txns/30d | 31 users, 618 user-days | ~6.00 | ~0.70% | Volume is confirmed consistently ~50%+ higher than Veteran-casual across 4 clean runs. CTR component is the unstable half of this comparison (see below). |
+| Veteran × ≥3 UPI txns/30d (casual) | 24 users, 559 user-days | ~3.95 | ~1.54% with one extreme outlier included, **~0.74% excluding it** | Grew from 11→24 in Run v8 via a fresh independent pool (old pool was exhausted). A single user (~36% CTR) dominates the raw average - use the outlier-excluded figure as the more representative one. |
+| Veteran × ≥40 UPI txns/30d (power) | 31 users, 749 user-days | ~3.39 | ~2.52% | Direction (power > casual engagement) confirmed across 4 clean runs without exception. Magnitude vs Veteran-casual has moved substantially each run (10x→5.8x→5.1x→3.4x excl. outlier/1.6x incl.) - do not cite a specific multiplier, it is still moving. |
 
-**Revised guidance for Agent 2:** weight the activity-tier axis more heavily than the platform-age axis when picking a "nearest measured cell" for the 17 unmeasured proxy cells — age has not shown a reliable effect in what's been measured, activity level has.
+**Revised guidance for Agent 2:** weight the activity-tier axis more heavily than the platform-age axis when picking a "nearest measured cell" for the 17 unmeasured proxy cells — age's CTR effect has not shown a reliable direction in what's been measured (though its volume effect is confirmed), while activity level's *direction* has never wavered even though its magnitude is still settling.
 
-**Confidence caveat (still applies, sample still below 100):** built on low-double-digit total clicks in the weaker cells (5-14). Directionally more trustworthy than Run v4 given the larger sample, but percentages still not fully stable. Prefer conservative, rounder caps over precise derived numbers.
+**Confidence caveat (still applies, sample still below 100 - at 86 as of Run v8):** built on low-double-digit total clicks in the weaker cells, and demonstrably sensitive to single-user outliers (proven twice now). Report median alongside mean where possible. Prefer conservative, rounder caps over precise derived numbers - do not present any specific ratio (5x, 3x, etc.) as settled.
 
-**Reachability finding — reproduced and refined (upgrade from "worth checking" to "escalate now"):** the zero-received-notification anomaly reproduced across two independent samples (Run v4: 33.3% of Veteran≥3; Run v5: 31.3% of Veteran≥3, 5/16). Critically, **it is NOT simply a function of platform age** — Veteran≥40 (equally long tenure) shows only 10.0%, while Onboarding≥3 shows 16.1%. The anomaly is concentrated specifically in **casual, lower-engagement long-tenured users**, not long tenure generally. Refined hypothesis: power users' frequent app opens keep push tokens fresh through general usage; casual veterans who transact occasionally without opening the app regularly may be the ones going stale. Raise this refined framing with engineering, not the broader "all D90+ users" framing from Run v4.
+**Reachability finding — corrected, was overstated.** Earlier framing ("4 consistent measurements, high confidence, ~31%") mistook repeated measurement of the SAME exhausted client_id pool for independent replication - it was the same underlying users counted three times, not three separate confirmations. A genuinely fresh, independently-drawn pool (Run v8) showed 23.5%, materially different from the ~31% seen on the stale pool. **Correct framing: Veteran-casual's zero-received rate is elevated versus Veteran-power (11.4%) - roughly 2x, not confidently 3x - but the precise rate is still uncertain and should be re-measured on fresh samples before escalating with a specific number.** The underlying hypothesis (power users' frequent app opens keep tokens fresh; casual veterans who transact without opening the app regularly may go stale) remains directionally plausible and worth raising with engineering, but without over-stating precision.
 
 **For the 17 cells with no direct measurement yet:** Agent 2 must not invent numbers for these. It borrows the shape of the nearest measured cell by proximity on both axes (platform age and activity tier) and labels every such borrowed value as "proxy, low confidence" in its output — never presented at the same confidence level as the 3 directly-measured cells above.
 
@@ -472,43 +472,48 @@ supplemented by proxy values for unmeasured cells), produce a current
 fatigue report and a BU slot allocation recommendation. Flag urgent
 risk. Never take irreversible action.
 
-## Seed saturation data (2026-08-06 Run v5, cumulative n=64 across 3 of 20 cells - directional, not final)
-- Onboarding x >=3 UPI txns/30d: observed ~5.54 PN/day (peak 3/day),
-  0.48% CTR (26 users, 523 user-days). NOTE: earlier data (n=9) showed
-  this cell as more saturated than Veteran-casual - that gap has
-  DISAPPEARED with more data (now statistically indistinguishable from
-  Veteran-casual's 0.49%). Do not treat platform age as a reliable
-  predictor of engagement based on what's measured so far.
-- Veteran x >=3 UPI txns/30d (casual): observed ~3.52 PN/day (peak
-  4-5/day), 0.49% CTR (11 users, 289 user-days). Essentially identical
-  engagement to Onboarding at the same activity tier.
-- Veteran x >=40 UPI txns/30d (power): observed ~3.24 PN/day (peak
-  4-5/day), 2.83% CTR, peak 3.79% at 4-5/day (27 users, 666 user-days).
-  This finding IS holding up and stabilizing as sample grows (ratio vs
-  casual veterans narrowed from ~10x to ~5.8x, direction unchanged).
-  Activity level - not platform age - is the more trustworthy
-  predictor of PN tolerance found so far. This remains the one
-  measured cell where volume could be maintained or slightly
-  increased toward the observed peak, not cut.
-- PROXY RULE - REVISED: for the 17 unmeasured cells, when borrowing
-  the shape of the nearest measured cell, weight the ACTIVITY-TIER
-  axis more heavily than the platform-age axis - age has not shown a
-  reliable effect in what's been measured, activity level has. Label
-  every borrowed value "proxy, low confidence."
+## Seed saturation data (2026-08-07 Run v8, cumulative n=86 across 3 of 20 cells - directional, not final)
+- Onboarding x >=3 UPI txns/30d: observed ~6.00 PN/day, ~0.70% CTR
+  (31 users, 618 user-days). VOLUME is confirmed ~50%+ higher than
+  Veteran-casual across 4 clean runs - trust this part. CTR component
+  has shown 4 different directional readings across 4 runs and is
+  further complicated by outlier sensitivity in the comparison cell
+  (see below) - do NOT treat any CTR-based age effect as settled.
+- Veteran x >=3 UPI txns/30d (casual): observed ~3.95 PN/day, ~1.54%
+  CTR including one extreme outlier user (~36% CTR, dominates the
+  average at this sample size) or ~0.74% excluding that outlier (24
+  users, 559 user-days). Use the outlier-excluded figure as more
+  representative. This cell's sample doubled in Run v8 via a fresh
+  independent pool after the prior pool was exhausted.
+- Veteran x >=40 UPI txns/30d (power): observed ~3.39 PN/day, ~2.52%
+  CTR (31 users, 749 user-days). DIRECTION vs Veteran-casual (power
+  engages more per notification) has held in every one of 4 clean
+  runs without exception - trust the direction. MAGNITUDE has moved
+  substantially every run (10x -> 5.8x -> 5.1x -> 3.4x excl. outlier
+  / 1.6x incl.) and is NOT stable - do not cite a specific multiplier.
+- PROXY RULE: for the 17 unmeasured cells, when borrowing the shape of
+  the nearest measured cell, weight the ACTIVITY-TIER axis more
+  heavily than the platform-age axis for DIRECTION (activity level's
+  direction is reliable, age's CTR effect is not) - but do not carry
+  over any specific magnitude/ratio into a proxy cell, since even the
+  measured cells' magnitudes are still moving.
 - Confidence caveat (must repeat in every output that cites these
-  numbers): sample has grown (was n=29, now n=64) but is still below
-  the 100-user threshold for a non-directional finding. Precise
-  percentages, especially for the two Veteran cells (11 and 27 users),
-  are not fully stable yet. Prefer conservative, rounder caps.
-- Reachability flag - REFINED: zero-received-notification rate is
-  NOT simply a function of platform age. Veteran-casual shows 31.3%
-  (reproduced across 2 samples, escalate), but Veteran-power (equally
-  long tenure) shows only 10.0% and Onboarding shows 16.1%. The
-  anomaly is concentrated in casual/lower-engagement long-tenured
-  users specifically, not long tenure generally - likely because
-  power users' frequent app opens keep push tokens fresh through
-  general usage. Frame any engineering escalation this way, not as
-  a generic "D90+ users" issue.
+  numbers): sample has grown (29 -> 64 -> 86) but is still below the
+  100-user threshold. PROVEN TWICE NOW to be sensitive to single-user
+  outliers and to mistaking same-pool remeasurement for convergence -
+  report median alongside mean where possible, and treat any
+  "consistent across N runs" claim with suspicion unless each
+  measurement came from an independently-drawn sample.
+- Reachability flag - CORRECTED (was overstated): earlier "4 consistent
+  measurements at ~31%, high confidence" mistook repeated measurement
+  of the same exhausted pool for independent replication. A genuinely
+  fresh pool (Run v8) showed 23.5%, materially different. Corrected
+  framing: Veteran-casual's zero-received rate is elevated versus
+  Veteran-power (11.4%) - roughly 2x, not confidently 3x - but the
+  precise rate is still uncertain. Hypothesis (frequent app opens keep
+  tokens fresh; casual veterans transacting without opening the app
+  may go stale) remains plausible but should not be escalated with a
+  specific percentage yet.
 
 ## Two-Layer Rule (must always apply)
 1. PLATFORM LIFECYCLE IS A HARD CEILING. A user's total PN count for
@@ -684,15 +689,17 @@ The per-run ceiling isn't a fixed call-count or rate limit — it's **response p
 
 ---
 
-**Agent 1 has run 7 times; v6 discarded due to contamination.** Trusted cumulative is now **73 valid users** (v3+v4+v5+v7 — v6 excluded), up from 64. Gap to the 100-user threshold is ~27. The two-tier memory fix worked correctly on this run — v7 read the shared `data_catalog.md` before the per-run file and explicitly re-verified all 4 event names before writing back. **The next resume run should read `run_findings_20260807_v7.md`** (the newest clean file) plus `data_catalog.md` as always.
+**Agent 1 has run 8 times; v6 discarded due to contamination.** Trusted cumulative is now **86 valid users** (v3+v4+v5+v7+v8 — v6 excluded), up from 73. Gap to the 100-user threshold is down to **~14** — closest yet. The two-tier memory fix continues working correctly (re-verified on v7 and v8 both). **The next resume run should read `run_findings_20260807_v8.md`** plus `data_catalog.md` as always, and continue the fresh Veteran-casual pool from rq_id `6a75987fb3e4d00fe066ff32` (15+ unsampled candidates remain in it).
 
-**Binding constraint identified: Veteran-casual's (Vet ≥3) sample is stalled at 11 users across two consecutive runs (v5 and v7) because its client_id pool is exhausted.** This is the actual bottleneck limiting further progress — Onboarding and Veteran-power both still have room to grow from existing pools, but Veteran-casual needs a **fresh** `atmost`-filtered query (per the method validated in Run 3) before it can add a single additional sample. Prioritize this first in the next run.
+**Methodological lesson from v8, worth carrying forward permanently: repeated measurement of the SAME exhausted pool is not independent replication, even if the numbers look stable.** The reachability anomaly appeared to "converge" at ~31% across v4/v5/v7 — but all three measurements were drawn from the same client_id pool that was slowly being exhausted, not fresh independent samples. The moment v8 pulled a genuinely NEW pool for Veteran-casual, the rate moved to 23.5% (fresh-pool-only) / 27.3% (cumulative). **Treat any "stable across N runs" claim with suspicion unless each measurement came from an independently-drawn sample, not a shared/overlapping pool.**
 
-**Platform-age effect (Comparison A): still no stable read — do not treat any single snapshot as a finding.** Across three clean measurements, the direction has changed three times: v4 showed Veteran-casual higher (0.32% vs 0.24%), v5 showed them roughly equal (0.49% vs 0.48%), v7 shows Onboarding higher (0.49% vs ~0.70%). This instability is root-caused to Veteran-casual's stalled sample (stuck at n=11) combined with Onboarding's shifting composition as new batches get added — **it is not evidence that the effect has "flipped" toward Onboarding.** Treat Comparison A as genuinely unresolved until Veteran-casual's binding constraint above is fixed and its sample actually grows.
+**Platform-age effect (Comparison A) — split into two parts, one confirmed, one still unresolved:**
+- **Volume: CONFIRMED.** Onboarding receives ~50%+ more PN/day than Veteran-casual, consistently across all 4 clean runs (v4/v5/v7/v8). This part is real.
+- **Engagement/CTR: STILL UNRESOLVED, now further complicated by outlier sensitivity.** Even after Veteran-casual's sample more than doubled (11→24), a single extreme user (~36% CTR) swings the comparison entirely — with the outlier, Veteran-casual reads higher than Onboarding; excluding it, they're roughly equal (0.74% vs 0.70%). Direction has now differed in 4 out of 4 clean runs. Do not report a CTR-based age effect until Veteran-casual's sample is large enough that one outlier can't dominate it — this needs both more N and outlier-robust reporting (median alongside mean), not just more N alone.
 
-**Activity-level effect (Comparison B): now confirmed across 4 independent clean runs (v3, v4, v5, v7).** Power-veteran engagement advantage over casual-veteran has been directionally consistent every time, with the ratio moderating as expected as sample grows (10x → 5.8x → 5.1x). This is the trustworthy finding — Agent 2's seed data and proxy-cell rule continue to weight activity tier over platform age for exactly this reason.
+**Activity-level effect (Comparison B) — direction confirmed, magnitude NOT settled, do not quote a specific ratio.** Power-veteran CTR advantage over casual-veteran has been directionally consistent across all 4 clean runs (v3/v4/v5/v7/v8) — power always wins, in every measurement including the worst case. But the magnitude is still moving substantially: **10x (v4) → 5.8x (v5) → 5.1x (v7) → 3.4x excluding the same outlier above, or 1.6x including it (v8).** The direction is trustworthy; the size of the effect is not yet stable enough to put a number on. Agent 2's seed data should state "power users engage meaningfully more than casual users, magnitude still being refined" rather than citing any specific multiplier from this list.
 
-**Reachability anomaly — now at 4 consistent measurements, high confidence.** Veteran-casual's zero-received rate: 33.3% (v4) → 31.3% (v5) → 31% (v7) — tightly converged. This is concentrated specifically in casual/lower-engagement long-tenured users, not long-tenured users generally (Veteran-power sits at 11.4%, stable). Worth escalating to engineering now with real confidence behind it, using the "infrequent app opens → stale push tokens" framing. Onboarding's anomaly has correctly been downgraded from flag to note (18.4%, now below the 20% threshold) — good discipline not keeping a stale alarm active once the pattern clears.
+**Recommendation for future runs given the outlier sensitivity found twice now:** report median CTR alongside mean CTR for every cell, and explicitly flag any single user whose CTR is more than ~3x the cell's median as an outlier requiring separate note — don't let one person's data silently dominate a small-N average.
 
 **Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. **This specific recommendation was based on Run v4's now-superseded numbers — re-run Agent 2 once permissions are fixed so it picks up Run v5's revised seed data before finalizing the sign-off decision.**
 
