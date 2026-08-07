@@ -700,6 +700,16 @@ The per-run ceiling isn't a fixed call-count or rate limit — it's **response p
 
 **Recommendation carried forward for any future sampling work:** report median CTR alongside mean, flag any user >3x the cell median as an outlier, and never call a multi-run pattern "converged" unless every supporting measurement came from an independently-drawn sample.
 
+### Live-mode test #1: Habit-forming × Casual (2026-08-07) — encouraging but not yet conclusive on the real question
+
+Agent 1 was made live and run on a genuinely fresh cell (no prior pool/memory to bias the comparison). Result: **42/50 sampled successfully, 0 API errors, 0 rate limits** — roughly 2x the test-mode baseline of 16-24/run.
+
+**Important nuance: this does not yet prove live mode fixed the heavy-payload context ceiling.** The run stopped because it exhausted its first batch of 50 candidates, NOT because of context exhaustion — and this cell's heaviest user was only 243 events, genuinely light compared to the power-tier users (40-250KB payloads) that caused problems in test mode. A clean run on a light cell doesn't tell us whether live mode helps with the *specific* scenario that was actually failing before. **The real test is a heavy (power-tier) cell in live mode, with an explicit attempt to paginate past the first batch** — that's the next run (see Instructions below).
+
+**The substantive finding from this cell is valuable regardless of the live-mode question.** Habit-forming×Casual (cr_t 22-30 days, 3-9 UPI txns/30d) shows: highest PN/day (~5.78, tied with Onboarding), lowest CTR of any cell studied (0.37% mean, 0.09% excluding 6 mild outliers), lowest zero-event rate (16.0%, meaning these users are fully reachable — tokens haven't gone stale yet). Read together: **this cohort is being sent Onboarding-level volume without Onboarding-level relevance, despite being fully reachable to fix.** A real, actionable over-messaging signal, from a single clean first read (n=42, one run — treat as a strong first hypothesis, not yet independently replicated like the Veteran cells took 4-5 runs to properly settle).
+
+**Corroborating observation on the Veteran-casual outlier-subgroup question:** this cell's outliers topped out at 2.75% CTR — nothing close to Veteran-casual's 36-41% outliers. If wild outliers were just a generic small-N artifact, we'd expect to see similarly extreme ones here too. We don't. Modest support that the Veteran-casual high-engagement subgroup is a real, cell-specific phenomenon worth its own investigation, not statistical noise.
+
 **Agent 2 built and test-run once (2026-08-06).** Blocked by a workspace permissions issue — see below. Logic held up correctly despite this: it fell back to seed data honestly (no fabrication), built the full 20-cell proxy matrix, correctly flagged Onboarding × Active/Regular's 6→3 cut as a −51% high-impact change requiring CRM sign-off, and proposed a ramped rollout (6→4→3) rather than an abrupt cut. **This specific recommendation was based on Run v4's now-superseded numbers — re-run Agent 2 once permissions are fixed so it picks up Run v5's revised seed data before finalizing the sign-off decision.**
 
 ### 🚩 MoEngage issues to raise (running list)
