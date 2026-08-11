@@ -1,0 +1,61 @@
+name: Master Enriched Weekly Update
+
+# Scheduled: runs every Monday at 07:00 IST (01:30 UTC) — pulls the last 10
+#            days (10 > 7 so the window overlaps the prior run; safe because
+#            upsert_master_enriched dedupes by Campaign_ID+Variation, newest
+#            wins — no duplicate rows from the overlap).
+# Manual:    trigger from GitHub UI with a custom day count to backfill a gap
+#
+# To backfill a larger gap (e.g. 25 days):
+#   GitHub → Actions → Master Enriched Weekly Update → Run workflow
+#   days: 25
+
+on:
+  schedule:
+    - cron: '30 1 * * 1'   # UTC 01:30 Monday = IST 07:00 Monday
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to pull from API (leave blank for default 10)'
+        required: false
+        default: ''
+
+jobs:
+  update-master-enriched:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCP service account credentials
+        run: |
+          mkdir -p credentials
+          echo '${{ secrets.GOOGLE_CLOUD_KEY_JSON }}' > credentials/service_account.json
+
+      - name: Run master_enriched update
+        env:
+          MOENGAGE_APP_ID: ${{ secrets.MOENGAGE_APP_ID }}
+          MOENGAGE_SECRET_KEY: ${{ secrets.MOENGAGE_SECRET_KEY }}
+          MOENGAGE_DATA_CENTER: api-03
+          GCP_PROJECT_ID: copies-qc
+          GOOGLE_CLOUD_KEY_PATH: credentials/service_account.json
+          BQ_DATASET: pn_report
+        run: |
+          DAYS="${{ github.event.inputs.days }}"
+          if [ -z "$DAYS" ]; then DAYS=10; fi
+          echo "Pulling last $DAYS days into master_enriched"
+          python run_report.py --api --days "$DAYS" --target master_enriched
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f credentials/service_account.json

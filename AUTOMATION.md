@@ -1,25 +1,53 @@
 # POP PN Report — Automation Guide
 
-## Current setup: GitHub Actions (daily, fully automatic)
+## Current setup: GitHub Actions (fully automatic, two workflows)
 
-- Workflow: `.github/workflows/dod_daily_update.yml`
-- Runs every day at **01:00 UTC (06:30 IST)** via cron schedule
-- Pulls **yesterday's** campaigns from the MoEngage API and writes them into
-  the BigQuery `dod_daily` table (`copies-qc.pn_report.dod_daily`)
-- No manual steps needed once the GitHub secrets below are set — it just runs
+Both workflows use the same GitHub secrets and write to the same BigQuery
+dataset, but feed different parts of the dashboard — see below.
+
+### 1. `dod_daily_update.yml` — daily, feeds the DOD page only
+- Runs every day at **01:00 UTC (06:30 IST)**
+- Pulls **yesterday's** campaigns and writes them into `dod_daily`
+  (`copies-qc.pn_report.dod_daily`)
+- Feeds only the dashboard's **Day-Over-Day (DOD)** page
+
+### 2. `master_enriched_weekly.yml` — weekly, feeds every other page
+- Runs every **Monday at 01:30 UTC (07:00 IST)**
+- Pulls the **last 10 days** and upserts into `master_enriched`
+  (`copies-qc.pn_report.master_enriched`) — 10 > 7 so each run's window
+  overlaps the previous one; safe, because rows are deduped by
+  `Campaign_ID` + `Variation` with the newest data winning
+- Feeds **every other page**: Executive Overview, BU Performance, Copy
+  Intelligence, Brand Guidelines Impact, Top & Bottom Campaigns, A/B Testing
+  Hub, Timing & Frequency, Segment Intelligence, Channel Intelligence,
+  Control Group Analysis — and the sidebar **Filter by Month** widget, which
+  reads its month list directly from this table
+- **Added 2026-08-11** after `master_enriched` was found stalled at July 20
+  for three weeks — it had only ever been updated by someone remembering to
+  run `run_report.py` manually. This workflow removes that dependency.
+
+Neither workflow updates the other's table. If one page looks stale, check
+which workflow actually feeds it before assuming the other one is broken.
 
 ### Required GitHub secrets
-Settings → Secrets and variables → Actions, on `kajal461/pop-pn-report`:
+Settings → Secrets and variables → Actions, on `kajal461/pop-pn-report`
+(shared by both workflows):
 - `GOOGLE_CLOUD_KEY_JSON` — full GCP service account key JSON (as a string)
 - `MOENGAGE_APP_ID`
 - `MOENGAGE_SECRET_KEY`
 
-### Manual backfill (for gaps or historical loads)
-GitHub → Actions → **DOD Daily Update** → Run workflow, with:
-- `date_from`: `YYYY-MM-DD`
-- `date_to`: `YYYY-MM-DD` (optional — defaults to `date_from`)
+Note: these secrets exist **only** in GitHub Actions, not in the local
+`.env` — `MOENGAGE_APP_ID`/`MOENGAGE_SECRET_KEY` are intentionally left
+blank locally. Local `--api` runs won't authenticate; use `--csv` locally,
+or trigger the GitHub workflow manually (see below) if you need a fresh API
+pull outside the schedule.
 
-This loops day-by-day over the range and calls the same underlying script per day.
+### Manual backfill (for gaps or historical loads)
+GitHub → Actions → pick the workflow → Run workflow:
+- **DOD Daily Update**: `date_from` / `date_to` (`YYYY-MM-DD`), loops
+  day-by-day over the range
+- **Master Enriched Weekly Update**: `days` (integer) — pulls that many days
+  back from today in one call
 
 ### How the data behaves
 - `dod_daily`: one day's rows are appended per run, keyed by `sent_date`.
@@ -28,8 +56,8 @@ This loops day-by-day over the range and calls the same underlying script per da
 - The dashboard's **DOD page** filters this table to the **current calendar
   month only**. Older months stay in BigQuery permanently but aren't shown on
   that page — this is a display filter, not a data deletion.
-- `master_enriched` and the other summary tables are separate — see the
-  weekly/manual run below — and accumulate full history across runs.
+- `master_enriched`: upserted (not appended) — see `upsert_master_enriched`
+  in `src/bigquery_writer.py`. Accumulates full history; nothing is pruned.
 
 ## Local development
 
@@ -49,15 +77,17 @@ own. If the DOD page looks stale: hard-refresh the browser first
 (Cmd+Shift+R); if that doesn't help, restart the Streamlit process
 (`ps aux | grep streamlit`, kill it, `streamlit run dashboard.py` again).
 
-## Weekly / manual full report run (separate from the daily DOD job)
+## Ad-hoc local runs (optional — both tables are now on schedule by default)
 
-Writes to `master_enriched` and rebuilds all summary tables:
+Useful for testing changes or an out-of-band pull; not required for normal
+operation now that both tables update automatically.
 
 ```bash
 python run_report.py --csv --export-path ~/Downloads/"your-moengage-export.csv"
 ```
 
-Or pull directly from the API instead of a CSV export:
+Or, from a machine that has `MOENGAGE_APP_ID`/`MOENGAGE_SECRET_KEY` set
+(not this repo's local `.env` — see the note above):
 
 ```bash
 python run_report.py --api --days 7                # last 7 days, writes to BigQuery
@@ -66,7 +96,7 @@ python run_report.py --api --days 7 --no-upload     # same, but dry-run (no BigQ
 
 Relevant flags (see `run_report.py --help` for the full list):
 - `--target {master_enriched, dod_daily}` — destination table, default
-  `master_enriched`. The daily automation always passes `--target dod_daily`.
+  `master_enriched`.
 - `--date {yesterday | YYYY-MM-DD}` — single-day pull, used with
   `--target dod_daily`; overrides `--days`.
 - `--no-upload` / `--dry-run` — process without writing to BigQuery.
