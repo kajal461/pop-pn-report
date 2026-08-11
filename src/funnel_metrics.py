@@ -15,7 +15,16 @@ def _primary_conversions(row: pd.Series) -> float:
     return 0.0
 
 def add_funnel_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """Add derived funnel rate columns. Does not mutate input."""
+    """Add derived funnel rate columns. Does not mutate input.
+
+    reachability_rate/fc_hit_rate need COL_ALL_AFTER_FC and COL_ALL_INSTALLED,
+    which only exist in MoEngage's CSV/Sheets campaign export - the Stats API
+    (src.loader.load_from_moengage_api, used by run_report.py --api) has no
+    equivalent field and never populates them. Rather than crash on that
+    combination, degrade those two columns to NA so the rest of the funnel
+    still computes; NA (not 0) keeps "not measured for this source" visually
+    distinct from a genuine 0% reading.
+    """
     df = df.copy()
     numeric_cols = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
                     COL_ALL_AFTER_FC, COL_ALL_INSTALLED] + GOAL_CONVERTED_COLS
@@ -23,9 +32,15 @@ def add_funnel_metrics(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
+    has_fc_data = COL_ALL_AFTER_FC in df.columns and COL_ALL_INSTALLED in df.columns
+
     df['primary_conversions']      = df.apply(_primary_conversions, axis=1)
-    df['reachability_rate']        = df.apply(lambda r: _safe_div(r[COL_ALL_AFTER_FC], r[COL_ALL_INSTALLED]), axis=1)
-    df['fc_hit_rate']              = df.apply(lambda r: 1 - _safe_div(r[COL_ALL_AFTER_FC], r[COL_ALL_INSTALLED]), axis=1)
+    if has_fc_data:
+        df['reachability_rate']    = df.apply(lambda r: _safe_div(r[COL_ALL_AFTER_FC], r[COL_ALL_INSTALLED]), axis=1)
+        df['fc_hit_rate']          = df.apply(lambda r: 1 - _safe_div(r[COL_ALL_AFTER_FC], r[COL_ALL_INSTALLED]), axis=1)
+    else:
+        df['reachability_rate']    = pd.NA
+        df['fc_hit_rate']          = pd.NA
     df['sent_to_impression_rate']  = df.apply(lambda r: _safe_div(r[COL_ALL_IMPRESSIONS], r[COL_ALL_SENT]), axis=1)
     df['impression_to_click_rate'] = df.apply(lambda r: _safe_div(r[COL_ALL_CLICKS], r[COL_ALL_IMPRESSIONS]), axis=1)
     df['click_to_convert_rate']    = df.apply(lambda r: _safe_div(r['primary_conversions'], r[COL_ALL_CLICKS]), axis=1)
