@@ -119,47 +119,16 @@ def main() -> None:
         # raw_df has Campaign ID + metrics from Stats API
         dod_df = raw_df.copy()
         from config import TAG_VALUE_TO_BU, CAMPAIGN_NAME_BU_MAP
+        from src.loader import enrich_campaign_metadata
 
-        # ── Step 1: Enrich from master_enriched (best source — has Tag Category BU tags) ──
-        print('\nEnriching from master_enriched...')
-        try:
-            from src.bq_loader import load_table as _load_table
-            _master_ref = _load_table('master_enriched')
-            if not _master_ref.empty:
-                _id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
-                _keep = [c for c in ['Campaign_Name','bu','Campaign_Sent_Time'] if c in _master_ref.columns]
-                _ref  = (_master_ref[[_id_col]+_keep]
-                         .drop_duplicates(subset=[_id_col], keep='last')
-                         .rename(columns={_id_col:'Campaign ID',
-                                          'Campaign_Name':'Campaign Name',
-                                          'Campaign_Sent_Time':'Campaign Sent Time'}))
-                # Drop overlapping cols from dod_df before merge to avoid _x/_y conflicts
-                _overlap = [c for c in _ref.columns if c in dod_df.columns and c != 'Campaign ID']
-                dod_df = dod_df.drop(columns=_overlap, errors='ignore')
-                dod_df = dod_df.merge(_ref, on='Campaign ID', how='left')
-                _matched = dod_df['bu'].notna().sum() if 'bu' in dod_df.columns else 0
-                print(f'   -> {_matched}/{len(dod_df)} campaigns resolved from master_enriched')
-        except Exception as _e:
-            print(f'   -> master_enriched lookup failed: {_e}')
+        # Resolve real Campaign Name / Campaign Sent Time (shared with the
+        # master_enriched --api path below - see enrich_campaign_metadata's
+        # docstring for why this can't just be skipped).
+        dod_df, _tags_map, _delivery_map, _searched_any = enrich_campaign_metadata(
+            dod_df, app_id, secret_key, data_center,
+        )
 
-        # ── Step 2: Search API for campaigns still missing name/BU ──────────────
-        _need_name = dod_df['Campaign Name'].isna() | (dod_df['Campaign Name'] == '')
-        _ids_to_search = dod_df[_need_name]['Campaign ID'].tolist()
-        if _ids_to_search:
-            print(f'\nFetching {len(_ids_to_search)} remaining names from MoEngage Search API...')
-            from src.loader import fetch_campaign_metadata
-            _meta = fetch_campaign_metadata(
-                campaign_ids=_ids_to_search,
-                app_id=app_id, secret_key=secret_key, data_center=data_center,
-            )
-            _tags_map      = {k: v.get('tags', [])         for k, v in _meta.items()}
-            _delivery_map  = {k: v.get('delivery_type', '') for k, v in _meta.items()}
-            for cid, mv in _meta.items():
-                if mv.get('name'):
-                    dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Name']     = mv['name']
-                    dod_df.loc[dod_df['Campaign ID']==cid, 'Campaign Sent Time'] = mv.get('sent_time','')
-                    dod_df.loc[dod_df['Campaign ID']==cid, 'delivery_type']      = mv.get('delivery_type','')
-
+        if _searched_any:
             # Filter 1: exclude confirmed Flow/triggered delivery types
             _flow_types = {'EVENT_TRIGGERED', 'PERIODIC', 'TRANSACTIONAL', 'FLOW'}
             if 'delivery_type' in dod_df.columns:
@@ -183,9 +152,6 @@ def main() -> None:
             dod_df   = dod_df[~(_is_flow_type | _is_journey_name)].copy()
             _excluded = _before - len(dod_df)
             print(f'   -> Excluded {_excluded} Flow/Journey campaigns ({_is_flow_type.sum()} by type, {_is_journey_name.sum()} by name), keeping {len(dod_df)}')
-        else:
-            _tags_map     = {}
-            _delivery_map = {}
 
         # ── Step 3: BU detection — name prefix for anything still missing BU ──
         def _detect_bu(row):
@@ -228,7 +194,16 @@ def main() -> None:
         print(f'\nDone. dod_daily updated for {sent_date} with {len(dod_df):,} campaigns.')
         return
 
-    # ── Full pipeline path (CSV / Sheets — not DOD) ───────────────────────
+    # ── Full pipeline path (master_enriched target — CSV/Sheets or API) ────
+    # CSV/Sheets already has real Campaign Name/Sent Time baked in. API-
+    # sourced raw_df does not (see enrich_campaign_metadata's docstring) -
+    # resolve it here, the same way the dod_daily branch above does, before
+    # build_master()'s first step (tag_bu) runs and needs a real name to
+    # match against.
+    if args.api:
+        from src.loader import enrich_campaign_metadata
+        raw_df, _, _, _ = enrich_campaign_metadata(raw_df, app_id, secret_key, data_center)
+
     print('Building master enriched table...')
     master = build_master(raw_df, lookup_df)
     print(f'   -> {len(master)} rows, {len(master.columns)} columns')

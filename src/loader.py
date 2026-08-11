@@ -400,3 +400,87 @@ def fetch_campaign_metadata(
     matched = sum(1 for v in metadata.values() if v.get('name'))
     print(f'  Campaign metadata: {matched}/{len(campaign_ids)} names fetched from Search API')
     return metadata
+
+
+def enrich_campaign_metadata(
+    df: pd.DataFrame,
+    app_id: str,
+    secret_key: str,
+    data_center: str = 'api-03',
+) -> tuple:
+    """
+    Resolve real 'Campaign Name' / 'Campaign Sent Time' for API-sourced rows.
+
+    load_from_moengage_api() leaves both blank - the Stats API it calls has
+    no equivalent field. Without this, downstream enrichers silently produce
+    wrong output instead of erroring: time_enricher.enrich_time() parses the
+    blank into sent_date=NaT (pd.to_datetime('', errors='coerce')), and
+    bu_tagger.tag_bu() falls back to a name-based heuristic with nothing to
+    match against.
+
+    Shared by both run_report.py targets (dod_daily and master_enriched) -
+    originally this only ran inside the dod_daily branch, which meant
+    --api --target master_enriched silently produced rows with no sent_date
+    and likely wrong BU tags (caught 2026-08-11: 30 such rows landed in
+    master_enriched with sent_month='NaT' before this existed).
+
+    Two-step resolution:
+    1. Look up existing master_enriched rows by Campaign ID (cheap, no API
+       call - most campaigns were already seen in an earlier pull).
+    2. For campaigns still missing a name after step 1, call the Search
+       Campaigns API to resolve name/sent_time/tags directly.
+
+    Returns (enriched_df, tags_map, delivery_map, searched_any).
+    tags_map/delivery_map are needed by callers that do additional
+    filtering on top (e.g. dod_daily's Flow/Journey exclusion, which stays
+    in run_report.py - it's a DOD-page-specific business rule, not something
+    master_enriched's broader historical view should also apply).
+    searched_any is True iff step 2 actually ran for at least one campaign;
+    callers should gate any tags_map/delivery_map-dependent filtering on
+    this flag rather than on the dicts' truthiness, to exactly match
+    pre-refactor behavior (a step-2 call that legitimately found nothing
+    still counts as "ran").
+    """
+    df = df.copy()
+
+    # Step 1: enrich from existing master_enriched (best source - has real tags)
+    print('\nEnriching from master_enriched...')
+    try:
+        from src.bq_loader import load_table as _load_table
+        _master_ref = _load_table('master_enriched')
+        if not _master_ref.empty:
+            _id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
+            _keep = [c for c in ['Campaign_Name', 'bu', 'Campaign_Sent_Time'] if c in _master_ref.columns]
+            _ref  = (_master_ref[[_id_col] + _keep]
+                     .drop_duplicates(subset=[_id_col], keep='last')
+                     .rename(columns={_id_col: 'Campaign ID',
+                                      'Campaign_Name': 'Campaign Name',
+                                      'Campaign_Sent_Time': 'Campaign Sent Time'}))
+            _overlap = [c for c in _ref.columns if c in df.columns and c != 'Campaign ID']
+            df = df.drop(columns=_overlap, errors='ignore')
+            df = df.merge(_ref, on='Campaign ID', how='left')
+            _matched = df['bu'].notna().sum() if 'bu' in df.columns else 0
+            print(f'   -> {_matched}/{len(df)} campaigns resolved from master_enriched')
+    except Exception as _e:
+        print(f'   -> master_enriched lookup failed: {_e}')
+
+    # Step 2: Search API for campaigns still missing a name
+    tags_map, delivery_map, searched_any = {}, {}, False
+    _need_name = df['Campaign Name'].isna() | (df['Campaign Name'] == '')
+    _ids_to_search = df[_need_name]['Campaign ID'].tolist()
+    if _ids_to_search:
+        searched_any = True
+        print(f'\nFetching {len(_ids_to_search)} remaining names from MoEngage Search API...')
+        _meta = fetch_campaign_metadata(
+            campaign_ids=_ids_to_search,
+            app_id=app_id, secret_key=secret_key, data_center=data_center,
+        )
+        tags_map     = {k: v.get('tags', [])          for k, v in _meta.items()}
+        delivery_map = {k: v.get('delivery_type', '')  for k, v in _meta.items()}
+        for cid, mv in _meta.items():
+            if mv.get('name'):
+                df.loc[df['Campaign ID'] == cid, 'Campaign Name']      = mv['name']
+                df.loc[df['Campaign ID'] == cid, 'Campaign Sent Time'] = mv.get('sent_time', '')
+                df.loc[df['Campaign ID'] == cid, 'delivery_type']      = mv.get('delivery_type', '')
+
+    return df, tags_map, delivery_map, searched_any
