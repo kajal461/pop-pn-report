@@ -38,7 +38,18 @@ def _brand_era(d) -> str:
 def enrich_time(df: pd.DataFrame) -> pd.DataFrame:
     """Add all time dimension columns derived from Campaign Sent Time."""
     df = df.copy()
-    dt = pd.to_datetime(df[COL_SENT_TIME], errors='coerce')
+    # format='mixed': pd.to_datetime on a Series infers ONE format from an
+    # early value and silently NaTs everything that doesn't match it - not
+    # an error, just wrong. Real data here mixes formats within a single
+    # batch (ISO-with-T from one enrichment source, space+microseconds from
+    # another), so format inference genuinely breaks on real data, not just
+    # a theoretical edge case. format='mixed' parses every value
+    # independently. Caught 2026-08-12: real, correctly-resolved August
+    # campaigns (real name, real Campaign Sent Time string, individually
+    # parseable) were still landing in sent_date=NaT because they happened
+    # to sit in a batch where an earlier row's different-but-also-valid
+    # format won the inference.
+    dt = pd.to_datetime(df[COL_SENT_TIME], errors='coerce', format='mixed')
     df['_dt'] = dt   # store for reuse in groupby — dropped at end
 
     df['sent_date']           = dt.dt.date

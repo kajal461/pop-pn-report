@@ -109,3 +109,33 @@ def test_nat_input_produces_safe_defaults():
     assert row['time_slot_bucket'] == 'Other'
     assert row['day_of_month_bucket'] == 'Rest of Month'
     assert row['brand_guidelines_era'] == 'Pre-June'
+
+
+def test_mixed_timestamp_formats_in_same_batch_all_parse_correctly():
+    """Caught 2026-08-12 in production: pd.to_datetime on a Series infers
+    ONE format from an early value and silently NaTs every row that
+    doesn't match it - not an error, just wrong sent_date/sent_month for
+    real, individually-valid timestamps. Real batches genuinely mix
+    formats (ISO-with-T from one enrichment source, space+microseconds
+    from another) within the same run - this isn't a contrived edge case,
+    it's what a --api master_enriched pull actually looks like. Every row
+    below is individually parseable; before the format='mixed' fix, rows
+    2 and 4 (which don't match row 0's ISO-T format) came back as NaT
+    despite being perfectly valid August timestamps."""
+    rows = [
+        {'Campaign Sent Time': '2026-07-20T12:30:00',            'Campaign ID': 'a', 'bu': 'UPI'},
+        {'Campaign Sent Time': '2026-08-01 06:30:26.342000',      'Campaign ID': 'b', 'bu': 'UPI'},
+        {'Campaign Sent Time': '',                                 'Campaign ID': 'c', 'bu': 'UPI'},
+        {'Campaign Sent Time': '2026-07-19T21:00:00',            'Campaign ID': 'd', 'bu': 'UPI'},
+        {'Campaign Sent Time': '2026-08-02 08:30:57.429000',      'Campaign ID': 'e', 'bu': 'UPI'},
+    ]
+    df = enrich_time(pd.DataFrame(rows)).set_index('Campaign ID')
+
+    import datetime
+    assert df.loc['a', 'sent_date'] == datetime.date(2026, 7, 20)
+    assert df.loc['b', 'sent_date'] == datetime.date(2026, 8, 1)
+    assert pd.isna(df.loc['c', 'sent_date'])  # genuinely blank - correctly stays NaT
+    assert df.loc['d', 'sent_date'] == datetime.date(2026, 7, 19)
+    assert df.loc['e', 'sent_date'] == datetime.date(2026, 8, 2)
+    assert df.loc['b', 'sent_month'] == '2026-08'
+    assert df.loc['e', 'sent_month'] == '2026-08'
