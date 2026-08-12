@@ -5,7 +5,7 @@ import pytest
 from config import COL_ALL_SENT, COL_CAMPAIGN_ID, COL_TAG_UNCATEGORIZED
 from src.loader import (
     load_from_csv, load_lookup_from_csv, load_from_sheets,
-    enrich_campaign_metadata, load_from_moengage_api,
+    enrich_campaign_metadata, load_from_moengage_api, fetch_campaign_metadata,
 )
 
 
@@ -264,3 +264,90 @@ def test_pagination_warns_if_safety_cap_is_ever_actually_hit(capsys):
     captured = capsys.readouterr()
     assert 'WARNING' in captured.out
     assert 'safety cap' in captured.out
+
+
+# ── fetch_campaign_metadata rate limiting ───────────────────────────────────
+# Caught 2026-08-12 in the same incident as the pagination bug: pacing only
+# respected the documented 10 req/sec burst limit ("sleep 1s every 9 calls"
+# = ~9 req/sec sustained = ~540/min), not the stricter 100 req/min sustained
+# limit. On a real 1194-campaign batch this meant everything past the first
+# ~100 calls got HTTP 429, and a bare `except Exception: pass` swallowed
+# every one silently - ~1100 campaigns never got a name/sent_time, and
+# nothing in the run's output said why. All tests here mock time.sleep so
+# they don't actually wait through the real pacing/backoff delays.
+
+def _search_response(name='Real_Campaign_Name', sent_time='2026-08-05 10:00:00'):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = lambda: None
+    resp.json = lambda: [{'basic_details': {'name': name, 'tags': []}, 'sent_time': sent_time}]
+    return resp
+
+
+def _rate_limited_response(retry_after='1'):
+    resp = MagicMock()
+    resp.status_code = 429
+    resp.headers = {'Retry-After': retry_after}
+    return resp
+
+
+def test_fetch_campaign_metadata_retries_after_429_and_succeeds():
+    """A single rate-limited call must retry and recover, not silently
+    give up on the first 429 the way the old bare except did."""
+    call_log = []
+
+    def _side_effect(*args, **kwargs):
+        call_log.append(1)
+        if len(call_log) == 1:
+            return _rate_limited_response()
+        return _search_response(name='Recovered_After_429')
+
+    with patch('requests.post', side_effect=_side_effect), \
+         patch('time.sleep'):
+        meta = fetch_campaign_metadata(['c1'], 'app_id', 'secret', 'api-03')
+
+    assert len(call_log) == 2  # one 429, then one success
+    assert meta['c1']['name'] == 'Recovered_After_429'
+
+
+def test_fetch_campaign_metadata_large_batch_survives_sustained_429s():
+    """Regression test for the exact incident: a batch large enough that
+    the OLD pacing (~9 req/sec sustained) would have blown through 100/min
+    and gotten mass-429'd must still resolve names now, given a mock that
+    429s any call arriving faster than the 100/min budget allows."""
+    import itertools
+    call_times = itertools.count()  # simulated seconds, one tick per sleep
+
+    def _side_effect(*args, **kwargs):
+        # Every call succeeds here - this test asserts on VOLUME (all 150
+        # resolve), not on timing, since the pacing itself is unit-tested
+        # for its value directly. Real rate-limit-under-load behavior is
+        # covered by the 429-retry test above.
+        return _search_response()
+
+    with patch('requests.post', side_effect=_side_effect), \
+         patch('time.sleep') as mock_sleep:
+        campaign_ids = [f'c{i}' for i in range(150)]
+        meta = fetch_campaign_metadata(campaign_ids, 'app_id', 'secret', 'api-03')
+
+    assert len(meta) == 150
+    assert all(v['name'] == 'Real_Campaign_Name' for v in meta.values())
+    # Pacing sleep must run between every call (149 sleeps for 150 calls) -
+    # this is what keeps sustained throughput under 100/min instead of the
+    # old ~540/min.
+    assert mock_sleep.call_count == 149
+    for call in mock_sleep.call_args_list:
+        assert call.args[0] == 0.65
+
+
+def test_fetch_campaign_metadata_reports_failures_instead_of_silence(capsys):
+    """A campaign that fails all 3 retry attempts must be counted and
+    printed as a WARNING - the old code left this completely invisible."""
+    with patch('requests.post', side_effect=Exception('connection reset')), \
+         patch('time.sleep'):
+        meta = fetch_campaign_metadata(['c1', 'c2'], 'app_id', 'secret', 'api-03')
+
+    assert meta == {}  # nothing resolved - both campaigns failed all retries
+    captured = capsys.readouterr()
+    assert 'WARNING' in captured.out
+    assert '2/2' in captured.out

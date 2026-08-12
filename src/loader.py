@@ -359,12 +359,42 @@ def fetch_campaign_metadata(
         'Content-Type':  'application/json',
     }
 
-    metadata = {}
-    for i, campaign_id in enumerate(campaign_ids):
-        # Respect 10 req/sec rate limit
-        if i > 0 and i % 9 == 0:
-            time.sleep(1)
+    def _search_one(payload: dict) -> tuple:
+        """POST to the Search Campaigns API with 429-aware retry.
+        Returns (results_or_None, failed: bool)."""
+        for _attempt in range(3):
+            try:
+                resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+                if resp.status_code == 429:
+                    wait = float(resp.headers.get('Retry-After', 10 * (_attempt + 1)))
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json(), False
+            except Exception:
+                if _attempt == 2:
+                    return None, True
+        return None, True
 
+    # Pace to the STRICTER "100 req/min" sustained limit, not just the
+    # documented "10 req/sec" burst limit - 10/sec sustained blows through
+    # 100/min in 10 seconds. ~0.65s between calls -> ~92/min, safely under
+    # both.
+    #
+    # Caught 2026-08-12: the old "sleep 1s every 9 calls" pacing respected
+    # 10/sec but not 100/min - at ~9 req/sec sustained that's ~540/min. On a
+    # 1194-campaign batch, nearly everything past the first ~100 calls got
+    # rate-limited (HTTP 429), and the bare `except Exception: pass` that
+    # used to be here swallowed every one silently. ~1100 campaigns never
+    # got a name/sent_time - they showed up as unexplained extra NaT rows
+    # in master_enriched, not as any visible error.
+    _pace = 0.65
+
+    metadata = {}
+    _failed  = 0
+    for i, campaign_id in enumerate(campaign_ids):
+        if i > 0:
+            time.sleep(_pace)
         payload = {
             'request_id':                str(uuid.uuid4()),
             'campaign_fields':           {'id': campaign_id},
@@ -373,31 +403,31 @@ def fetch_campaign_metadata(
             'limit': 1,
             'page':  1,
         }
-        try:
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
-            resp.raise_for_status()
-            results = resp.json()
-            if results and isinstance(results, list):
-                c  = results[0]
-                bd = c.get('basic_details', {}) or {}
-                metadata[campaign_id] = {
-                    'name':             bd.get('name', ''),
-                    'tags':             bd.get('tags', []) or [],
-                    'sent_time':        c.get('sent_time', '') or '',
-                    'parent_id':        c.get('parent_id', '') or '',
-                    'delivery_type':    c.get('campaign_delivery_type', '') or '',
-                }
-        except Exception:
-            pass  # Leave metadata blank — campaign shows with ID only
+        results, failed = _search_one(payload)
+        if failed:
+            _failed += 1
+        elif results and isinstance(results, list):
+            c  = results[0]
+            bd = c.get('basic_details', {}) or {}
+            metadata[campaign_id] = {
+                'name':             bd.get('name', ''),
+                'tags':             bd.get('tags', []) or [],
+                'sent_time':        c.get('sent_time', '') or '',
+                'parent_id':        c.get('parent_id', '') or '',
+                'delivery_type':    c.get('campaign_delivery_type', '') or '',
+            }
+
+    if _failed:
+        print(f'  WARNING: Search API failed for {_failed}/{len(campaign_ids)} campaigns '
+              f'after retries - they will show up with no name/sent_time.')
 
     # Second pass: for campaigns with no name, try looking up via parent_campaign_id
     # (child/variation campaigns may not be directly searchable)
-    _missing = [cid for cid, v in metadata.items() if not v.get('name')]
     _parent_ids = list({v.get('parent_id') for v in metadata.values()
                         if v.get('parent_id') and not metadata.get(v['parent_id'], {}).get('name')})
-    for parent_id in _parent_ids[:20]:   # cap at 20 parent lookups
-        if i > 0 and i % 9 == 0:
-            time.sleep(1)
+    for j, parent_id in enumerate(_parent_ids[:20]):   # cap at 20 parent lookups
+        if j > 0:
+            time.sleep(_pace)
         payload = {
             'request_id':                str(uuid.uuid4()),
             'campaign_fields':           {'id': parent_id},
@@ -406,25 +436,20 @@ def fetch_campaign_metadata(
             'limit': 1,
             'page':  1,
         }
-        try:
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=10)
-            resp.raise_for_status()
-            results = resp.json()
-            if results and isinstance(results, list):
-                c  = results[0]
-                bd = c.get('basic_details', {}) or {}
-                parent_meta = {
-                    'name':          bd.get('name', ''),
-                    'tags':          bd.get('tags', []) or [],
-                    'delivery_type': c.get('campaign_delivery_type', '') or '',
-                    'sent_time': c.get('sent_time', '') or '',
-                }
-                # Apply parent metadata to all child campaigns with this parent
-                for cid, v in metadata.items():
-                    if v.get('parent_id') == parent_id and not v.get('name'):
-                        metadata[cid].update(parent_meta)
-        except Exception:
-            pass
+        results, failed = _search_one(payload)
+        if not failed and results and isinstance(results, list):
+            c  = results[0]
+            bd = c.get('basic_details', {}) or {}
+            parent_meta = {
+                'name':          bd.get('name', ''),
+                'tags':          bd.get('tags', []) or [],
+                'delivery_type': c.get('campaign_delivery_type', '') or '',
+                'sent_time': c.get('sent_time', '') or '',
+            }
+            # Apply parent metadata to all child campaigns with this parent
+            for cid, v in metadata.items():
+                if v.get('parent_id') == parent_id and not v.get('name'):
+                    metadata[cid].update(parent_meta)
 
     matched = sum(1 for v in metadata.values() if v.get('name'))
     print(f'  Campaign metadata: {matched}/{len(campaign_ids)} names fetched from Search API')
