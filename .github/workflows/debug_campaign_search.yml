@@ -1,0 +1,62 @@
+name: Debug Campaign Search Response
+
+# Manual, throwaway diagnostic - dumps the RAW MoEngage Search Campaigns API
+# response for one campaign_id so we can see the real campaign_content
+# structure instead of guessing from documentation. Not part of the
+# regular pipeline. Safe to delete once no longer needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign_id:
+        description: 'MoEngage campaign_id to look up'
+        required: true
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Fetch and dump raw response
+        env:
+          MOENGAGE_APP_ID: ${{ secrets.MOENGAGE_APP_ID }}
+          MOENGAGE_SECRET_KEY: ${{ secrets.MOENGAGE_SECRET_KEY }}
+        run: |
+          python3 -c "
+          import os, json, base64, uuid, requests
+
+          app_id = os.environ['MOENGAGE_APP_ID']
+          secret_key = os.environ['MOENGAGE_SECRET_KEY']
+          campaign_id = '${{ github.event.inputs.campaign_id }}'
+
+          credentials = base64.b64encode(f'{app_id}:{secret_key}'.encode()).decode()
+          endpoint = 'https://api-03.moengage.com/core-services/v1/campaigns/search'
+          headers = {
+              'Authorization': f'Basic {credentials}',
+              'MOE-APPKEY': app_id,
+              'Content-Type': 'application/json',
+          }
+          payload = {
+              'request_id': str(uuid.uuid4()),
+              'campaign_fields': {'id': campaign_id},
+              'include_archive_campaigns': True,
+              'include_child_campaigns': True,
+              'limit': 1,
+              'page': 1,
+          }
+          resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+          print('STATUS:', resp.status_code)
+          print('=== FULL RAW RESPONSE ===')
+          print(json.dumps(resp.json(), indent=2, default=str))
+          "
