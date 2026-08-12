@@ -216,10 +216,27 @@ def load_from_moengage_api(
 
     all_campaigns = []
     offset        = 0
-    limit         = 10    # MoEngage Stats API max per request
-    max_pages     = 350   # 350 × 10 = 3500 campaigns — covers accounts with up to 3500 campaigns
+    limit         = 10      # MoEngage Stats API max per request
+    safety_cap    = 5000    # 5000 x 10 = 50,000 campaigns - a runaway-loop guard,
+                             # NOT a real limit. The actual exit conditions are
+                             # the three checks below (empty page / partial page /
+                             # offset reached total_campaigns).
+                             #
+                             # This used to be max_pages=350 (3,500 campaigns,
+                             # "covers accounts with up to 3500 campaigns") - that
+                             # was a real cap, not a safety net, and silently
+                             # truncated results once the account grew past it.
+                             # Confirmed 2026-08-11: an --api --target
+                             # master_enriched pull for 2026-07-17 -> 2026-08-11
+                             # returned only 30 campaigns, zero of them August-
+                             # dated, because total_campaigns was 5,708 - the
+                             # loop hit its 350-page ceiling at offset 3,500 and
+                             # stopped, never reaching the remaining ~2,200
+                             # campaigns where the real August activity lived.
+                             # No error, no warning - it just silently returned
+                             # a partial, misleadingly-plausible-looking result.
 
-    for _page_num in range(max_pages):
+    for _page_num in range(safety_cap):
         payload = {
             'request_id':       str(uuid.uuid4()),
             'start_date':       date_from,
@@ -270,6 +287,18 @@ def load_from_moengage_api(
             break
 
         offset += limit
+    else:
+        # for...else: this only runs if the loop exhausted safety_cap WITHOUT
+        # ever hitting one of the three break conditions above - i.e. the
+        # account has grown past 50,000 campaigns, or total_campaigns stopped
+        # being reported correctly. Either way, flag it loudly - this is
+        # exactly the failure mode that silently truncated results before
+        # (max_pages=350 used to be a real limit, not a safety net; see
+        # comment above safety_cap's definition).
+        print(f'  WARNING: pagination hit the {safety_cap}-page safety cap '
+              f'without reaching total_campaigns - results for {date_from} to '
+              f'{date_to} are likely INCOMPLETE. Investigate before trusting '
+              f'this pull.')
 
     if not all_campaigns:
         print(f'  MoEngage API returned 0 campaigns for {date_from} to {date_to}')
