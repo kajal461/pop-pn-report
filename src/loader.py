@@ -568,10 +568,19 @@ def enrich_campaign_metadata(
     except Exception as _e:
         print(f'   -> master_enriched lookup failed: {_e}')
 
-    # Step 2: Search API for campaigns still missing a name
+    # Step 2: Search API for campaigns still missing a name OR copy text.
+    # Checking copy separately matters on the FIRST run after 2026-08-13's
+    # copy-text fix: Step 1 already resolves Campaign Name for
+    # already-seen campaigns, so without this, those rows would never
+    # reach Step 2 and copy would never backfill - Campaign Name being
+    # known says nothing about whether copy was ever fetched for that row.
     tags_map, delivery_map, searched_any = {}, {}, False
     _need_name = df['Campaign Name'].isna() | (df['Campaign Name'] == '')
-    _ids_to_search = df[_need_name]['Campaign ID'].tolist()
+    _need_copy = (
+        df[COL_ANDROID_TITLE].isna() | (df[COL_ANDROID_TITLE] == '')
+        if COL_ANDROID_TITLE in df.columns else pd.Series(True, index=df.index)
+    )
+    _ids_to_search = df[_need_name | _need_copy]['Campaign ID'].tolist()
     if _ids_to_search:
         searched_any = True
         print(f'\nFetching {len(_ids_to_search)} remaining names from MoEngage Search API...')

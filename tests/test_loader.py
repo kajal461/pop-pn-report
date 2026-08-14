@@ -101,11 +101,15 @@ def _api_shaped_df(**overrides):
 
 
 def test_step1_resolves_from_existing_master_enriched_without_calling_search_api():
-    """When master_enriched already has this Campaign ID, step 2 (the paid/
-    rate-limited Search API call) must not run at all."""
+    """When master_enriched already has this Campaign ID FULLY resolved
+    (name, bu, sent time, AND copy - since 2026-08-13, copy counts as part
+    of "fully resolved" too), step 2 (the paid/rate-limited Search API
+    call) must not run at all."""
     master_ref = pd.DataFrame([{
         'Campaign_ID': 'c1', 'Campaign_Name': 'Promo_dotd_1407',
         'bu': 'Shop', 'Campaign_Sent_Time': '2026-07-14 10:00:00',
+        'Android_Message_Title_Android_Web_Title_iOS': 'Already Have This Title',
+        'Android_Message_Android_Web_Subtitle_iOS': 'Already Have This Body',
     }])
     with patch('src.bq_loader.load_table', return_value=master_ref) as mock_load, \
          patch('src.loader.fetch_campaign_metadata') as mock_search:
@@ -495,3 +499,32 @@ def test_enrich_campaign_metadata_step1_carries_copy_forward_from_master_enriche
     assert searched_any is False
     assert df.iloc[0][COL_ANDROID_TITLE] == 'Persisted Title'
     assert df.iloc[0][COL_ANDROID_BODY] == 'Persisted Body'
+
+
+def test_enrich_campaign_metadata_still_searches_when_name_known_but_copy_missing():
+    """Regression test for the backfill gap this exact fix needed: on the
+    first run after copy-text extraction shipped, Step 1 already resolves
+    Campaign Name for previously-seen campaigns (master_enriched has it),
+    but copy was never fetched before today - a row having a real name
+    must NOT skip Step 2 if it's still missing copy. Without this, every
+    already-known campaign would silently keep blank copy forever."""
+    from config import COL_ANDROID_TITLE, COL_ANDROID_BODY
+    master_ref = pd.DataFrame([{
+        'Campaign_ID': 'c1', 'Campaign_Name': 'Promo_dotd_1208_3', 'bu': 'Shop',
+        'Campaign_Sent_Time': '2026-08-12 10:00:00',
+        # Note: no title/body columns at all - exactly the pre-fix
+        # historical state of every row in master_enriched right now.
+    }])
+    with patch('src.bq_loader.load_table', return_value=master_ref), \
+         patch('src.loader.fetch_campaign_metadata') as mock_search:
+        mock_search.return_value = {
+            'c1': {'name': 'Promo_dotd_1208_3', 'title': 'Backfilled Title', 'body': 'Backfilled Body'},
+        }
+        df, _, _, searched_any = enrich_campaign_metadata(
+            _api_shaped_df(), 'app_id', 'secret', 'api-03',
+        )
+
+    mock_search.assert_called_once()  # must NOT skip Step 2 just because name resolved
+    assert searched_any is True
+    assert df.iloc[0][COL_ANDROID_TITLE] == 'Backfilled Title'
+    assert df.iloc[0][COL_ANDROID_BODY] == 'Backfilled Body'
