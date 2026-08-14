@@ -1,6 +1,6 @@
 # src/loader.py
 import pandas as pd
-from config import COL_ALL_SENT
+from config import COL_ALL_SENT, COL_ANDROID_TITLE, COL_ANDROID_BODY
 
 
 def _apply_sent_filter(df: pd.DataFrame) -> pd.DataFrame:
@@ -359,6 +359,38 @@ def fetch_campaign_metadata(
         'Content-Type':  'application/json',
     }
 
+    def _extract_copy(campaign_content: dict) -> tuple:
+        """Extract (title, body) from a Search API campaign_content object.
+
+        Caught 2026-08-13: campaign_content.content.push.<platform>.
+        basic_details.title/message is real, documented, and present on
+        live responses (verified against the actual API, not just docs -
+        see debug_campaign_search.yml). fetch_campaign_metadata() never
+        read it before now, which is why every API-sourced row showed
+        literal "None" for copy text in the dashboard - not an API
+        limitation, a parsing gap.
+
+        Prefers Android's template_backup.message (plain text) over
+        basic_details.message (which can contain raw HTML, e.g.
+        '<div>...</div>') - falls back to iOS if Android has nothing,
+        matching the CSV export's own 'Android Title..., Title (iOS)'
+        fallback convention (see COL_ANDROID_TITLE in config.py).
+        """
+        if not isinstance(campaign_content, dict):
+            return '', ''
+        push = ((campaign_content.get('content') or {}).get('push')) or {}
+
+        android        = push.get('android') or {}
+        android_backup = android.get('template_backup') or {}
+        android_basic  = android.get('basic_details') or {}
+        title = android_backup.get('title') or android_basic.get('title') or ''
+        body  = android_backup.get('message') or android_basic.get('message') or ''
+        if title or body:
+            return title, body
+
+        ios_basic = (push.get('ios') or {}).get('basic_details') or {}
+        return ios_basic.get('title', ''), ios_basic.get('message', '')
+
     def _search_one(payload: dict) -> tuple:
         """POST to the Search Campaigns API with 429-aware retry.
         Returns (results_or_None, failed: bool)."""
@@ -409,12 +441,15 @@ def fetch_campaign_metadata(
         elif results and isinstance(results, list):
             c  = results[0]
             bd = c.get('basic_details', {}) or {}
+            title, body = _extract_copy(c.get('campaign_content'))
             metadata[campaign_id] = {
                 'name':             bd.get('name', ''),
                 'tags':             bd.get('tags', []) or [],
                 'sent_time':        c.get('sent_time', '') or '',
                 'parent_id':        c.get('parent_id', '') or '',
                 'delivery_type':    c.get('campaign_delivery_type', '') or '',
+                'title':            title,
+                'body':             body,
             }
 
     if _failed:
@@ -440,19 +475,24 @@ def fetch_campaign_metadata(
         if not failed and results and isinstance(results, list):
             c  = results[0]
             bd = c.get('basic_details', {}) or {}
+            p_title, p_body = _extract_copy(c.get('campaign_content'))
             parent_meta = {
                 'name':          bd.get('name', ''),
                 'tags':          bd.get('tags', []) or [],
                 'delivery_type': c.get('campaign_delivery_type', '') or '',
                 'sent_time': c.get('sent_time', '') or '',
+                'title':         p_title,
+                'body':          p_body,
             }
             # Apply parent metadata to all child campaigns with this parent
             for cid, v in metadata.items():
                 if v.get('parent_id') == parent_id and not v.get('name'):
                     metadata[cid].update(parent_meta)
 
-    matched = sum(1 for v in metadata.values() if v.get('name'))
-    print(f'  Campaign metadata: {matched}/{len(campaign_ids)} names fetched from Search API')
+    matched      = sum(1 for v in metadata.values() if v.get('name'))
+    has_copy     = sum(1 for v in metadata.values() if v.get('title') or v.get('body'))
+    print(f'  Campaign metadata: {matched}/{len(campaign_ids)} names, '
+          f'{has_copy}/{len(campaign_ids)} with copy text, fetched from Search API')
     return metadata
 
 
@@ -504,12 +544,22 @@ def enrich_campaign_metadata(
         _master_ref = _load_table('master_enriched')
         if not _master_ref.empty:
             _id_col = 'Campaign_ID' if 'Campaign_ID' in _master_ref.columns else 'Campaign ID'
-            _keep = [c for c in ['Campaign_Name', 'bu', 'Campaign_Sent_Time'] if c in _master_ref.columns]
+            # Sanitized (BigQuery-safe) forms of COL_ANDROID_TITLE/COL_ANDROID_BODY -
+            # added 2026-08-13 so copy text resolved via Search API (see
+            # fetch_campaign_metadata's _extract_copy) persists forward through
+            # this same self-lookup on every later run, instead of getting
+            # silently dropped back to blank each time a campaign is re-seen.
+            _title_col_bq = 'Android_Message_Title_Android_Web_Title_iOS'
+            _body_col_bq  = 'Android_Message_Android_Web_Subtitle_iOS'
+            _keep = [c for c in ['Campaign_Name', 'bu', 'Campaign_Sent_Time',
+                                  _title_col_bq, _body_col_bq] if c in _master_ref.columns]
             _ref  = (_master_ref[[_id_col] + _keep]
                      .drop_duplicates(subset=[_id_col], keep='last')
                      .rename(columns={_id_col: 'Campaign ID',
                                       'Campaign_Name': 'Campaign Name',
-                                      'Campaign_Sent_Time': 'Campaign Sent Time'}))
+                                      'Campaign_Sent_Time': 'Campaign Sent Time',
+                                      _title_col_bq: COL_ANDROID_TITLE,
+                                      _body_col_bq: COL_ANDROID_BODY}))
             _overlap = [c for c in _ref.columns if c in df.columns and c != 'Campaign ID']
             df = df.drop(columns=_overlap, errors='ignore')
             df = df.merge(_ref, on='Campaign ID', how='left')
@@ -536,5 +586,11 @@ def enrich_campaign_metadata(
                 df.loc[df['Campaign ID'] == cid, 'Campaign Name']      = mv['name']
                 df.loc[df['Campaign ID'] == cid, 'Campaign Sent Time'] = mv.get('sent_time', '')
                 df.loc[df['Campaign ID'] == cid, 'delivery_type']      = mv.get('delivery_type', '')
+            # Copy text can resolve even when name doesn't (e.g. parent-
+            # fallback found a name but this specific child's own search
+            # returned it directly) - apply independently of the name check.
+            if mv.get('title') or mv.get('body'):
+                df.loc[df['Campaign ID'] == cid, COL_ANDROID_TITLE] = mv.get('title', '')
+                df.loc[df['Campaign ID'] == cid, COL_ANDROID_BODY]  = mv.get('body', '')
 
     return df, tags_map, delivery_map, searched_any

@@ -351,3 +351,147 @@ def test_fetch_campaign_metadata_reports_failures_instead_of_silence(capsys):
     captured = capsys.readouterr()
     assert 'WARNING' in captured.out
     assert '2/2' in captured.out
+
+
+# ── fetch_campaign_metadata copy text extraction ────────────────────────────
+# Caught 2026-08-13: the Search API's response has a documented, and now
+# LIVE-VERIFIED (see .github/workflows/debug_campaign_search.yml, run
+# 31598010230 against a real campaign), campaign_content field carrying the
+# actual push notification title/body - fetch_campaign_metadata() never read
+# it, only basic_details.name/tags. This is why every API-sourced row showed
+# literal "None" for copy in the dashboard - not an API limitation, a
+# parsing gap. The fixture below is the REAL shape from that live response
+# (Campaign_ID 6a7b3e1d7ac47d0b6f9a7fea, "Promo_dotd_1208_3" /
+# Nat Habit sale), not a guess from documentation alone.
+
+def _real_campaign_content_fixture():
+    """Verbatim shape from a real Search API response - single-variation,
+    no locale/A-B config, which debug_campaign_search.yml confirmed is how
+    MoEngage actually returns campaign_content for that case (flatter than
+    the docs' locale/variation-keyed description implies)."""
+    return {
+        'locales': [],
+        'variation_details': {'_id': '6a7c6b0638554c5fe2b3b458'},
+        'content': {
+            'push': {
+                'android': {
+                    'template_type': 'TIMER',
+                    'basic_details': {
+                        'title': '\U0001f6a8 Min. 40% OFF on Nat Habit!',
+                        # basic_details.message can carry raw HTML - this is
+                        # real, not contrived: exactly what came back live.
+                        'message': '<div>Grab your Nat Habit faves at best prices!!!</div>',
+                    },
+                    'template_backup': {
+                        # Clean-text counterpart used for copy analysis -
+                        # must be preferred over the HTML-bearing version.
+                        'title': '\U0001f6a8 Min. 40% OFF on Nat Habit!',
+                        'message': 'Grab your Nat Habit faves at best prices!!!',
+                    },
+                },
+                'ios': {
+                    'template_type': 'BASIC',
+                    'basic_details': {
+                        'title': '\U0001f6a8 Min. 40% OFF on Nat Habit!',
+                        'message': 'Grab your Nat Habit faves at best prices!!!',
+                    },
+                },
+            },
+        },
+    }
+
+
+def _search_response_with_content(name, campaign_content):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = lambda: None
+    resp.json = lambda: [{
+        'basic_details': {'name': name, 'tags': []},
+        'sent_time': '2026-08-12 10:00:00',
+        'campaign_content': campaign_content,
+    }]
+    return resp
+
+
+def test_fetch_campaign_metadata_extracts_real_copy_text():
+    """Uses the verbatim structure from a real, live API response - proves
+    the fix against ground truth, not a hypothetical shape."""
+    with patch('requests.post', return_value=_search_response_with_content(
+            'Promo_dotd_1208_3', _real_campaign_content_fixture())), \
+         patch('time.sleep'):
+        meta = fetch_campaign_metadata(['c1'], 'app_id', 'secret', 'api-03')
+
+    assert meta['c1']['title'] == '\U0001f6a8 Min. 40% OFF on Nat Habit!'
+    # Must prefer template_backup's clean text over basic_details' HTML
+    assert meta['c1']['body'] == 'Grab your Nat Habit faves at best prices!!!'
+    assert '<div>' not in meta['c1']['body']
+
+
+def test_fetch_campaign_metadata_falls_back_to_ios_when_android_empty():
+    content = {
+        'content': {'push': {
+            'android': {},
+            'ios': {'basic_details': {'title': 'iOS Only Title', 'message': 'iOS body'}},
+        }},
+    }
+    with patch('requests.post', return_value=_search_response_with_content('X', content)), \
+         patch('time.sleep'):
+        meta = fetch_campaign_metadata(['c1'], 'app_id', 'secret', 'api-03')
+
+    assert meta['c1']['title'] == 'iOS Only Title'
+    assert meta['c1']['body'] == 'iOS body'
+
+
+def test_fetch_campaign_metadata_missing_campaign_content_does_not_crash():
+    """A response with no campaign_content at all (e.g. an older API
+    version, or a non-push channel) must degrade to empty copy, not KeyError -
+    same discipline as every other missing-field case fixed today."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = lambda: None
+    resp.json = lambda: [{'basic_details': {'name': 'X', 'tags': []}, 'sent_time': ''}]
+    with patch('requests.post', return_value=resp), patch('time.sleep'):
+        meta = fetch_campaign_metadata(['c1'], 'app_id', 'secret', 'api-03')
+
+    assert meta['c1']['title'] == ''
+    assert meta['c1']['body'] == ''
+
+
+def test_enrich_campaign_metadata_writes_copy_into_correct_columns():
+    """End-to-end: enrich_campaign_metadata must land title/body into the
+    exact columns copy_analyser.py reads (COL_ANDROID_TITLE/COL_ANDROID_BODY),
+    not just into fetch_campaign_metadata's internal dict."""
+    from config import COL_ANDROID_TITLE, COL_ANDROID_BODY
+    with patch('src.bq_loader.load_table', return_value=pd.DataFrame()), \
+         patch('src.loader.fetch_campaign_metadata') as mock_search:
+        mock_search.return_value = {
+            'c1': {'name': 'Promo_dotd_1208_3', 'sent_time': '2026-08-12 10:00:00',
+                   'title': 'Real Title', 'body': 'Real Body'},
+        }
+        df, _, _, _ = enrich_campaign_metadata(_api_shaped_df(), 'app_id', 'secret', 'api-03')
+
+    assert df.iloc[0][COL_ANDROID_TITLE] == 'Real Title'
+    assert df.iloc[0][COL_ANDROID_BODY] == 'Real Body'
+
+
+def test_enrich_campaign_metadata_step1_carries_copy_forward_from_master_enriched():
+    """Once copy text is resolved and written to master_enriched, a LATER
+    run's Step 1 self-lookup must carry it forward - not silently drop it
+    back to blank because it wasn't in the lookup's column allowlist."""
+    from config import COL_ANDROID_TITLE, COL_ANDROID_BODY
+    master_ref = pd.DataFrame([{
+        'Campaign_ID': 'c1', 'Campaign_Name': 'Promo_dotd_1208_3', 'bu': 'Shop',
+        'Campaign_Sent_Time': '2026-08-12 10:00:00',
+        'Android_Message_Title_Android_Web_Title_iOS': 'Persisted Title',
+        'Android_Message_Android_Web_Subtitle_iOS': 'Persisted Body',
+    }])
+    with patch('src.bq_loader.load_table', return_value=master_ref), \
+         patch('src.loader.fetch_campaign_metadata') as mock_search:
+        df, _, _, searched_any = enrich_campaign_metadata(
+            _api_shaped_df(), 'app_id', 'secret', 'api-03',
+        )
+
+    mock_search.assert_not_called()  # fully resolved from Step 1 alone
+    assert searched_any is False
+    assert df.iloc[0][COL_ANDROID_TITLE] == 'Persisted Title'
+    assert df.iloc[0][COL_ANDROID_BODY] == 'Persisted Body'
