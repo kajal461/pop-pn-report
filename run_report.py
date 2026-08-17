@@ -129,29 +129,10 @@ def main() -> None:
         )
 
         if _searched_any:
-            # Filter 1: exclude confirmed Flow/triggered delivery types
-            _flow_types = {'EVENT_TRIGGERED', 'PERIODIC', 'TRANSACTIONAL', 'FLOW'}
-            if 'delivery_type' in dod_df.columns:
-                _is_flow_type = dod_df['Campaign ID'].map(_delivery_map).isin(_flow_types)
-            else:
-                _is_flow_type = pd.Series(False, index=dod_df.index)
-
-            # Filter 2: exclude Journey campaigns by name pattern
-            # These are streak/flow campaigns (D0 PN, D3 PN, SMS_D1, etc.)
-            # that slip through because Search API can't find their child IDs
-            import re as _re
-            _journey_pattern = _re.compile(
-                r'^(D\d+\s*PN|SMS_D\d+|D\d+_PN|Day\d+|JOURNEY_|FLOW_)',
-                _re.IGNORECASE
-            )
-            _is_journey_name = dod_df['Campaign Name'].fillna('').apply(
-                lambda x: bool(_journey_pattern.match(str(x)))
-            )
-
-            _before  = len(dod_df)
-            dod_df   = dod_df[~(_is_flow_type | _is_journey_name)].copy()
-            _excluded = _before - len(dod_df)
-            print(f'   -> Excluded {_excluded} Flow/Journey campaigns ({_is_flow_type.sum()} by type, {_is_journey_name.sum()} by name), keeping {len(dod_df)}')
+            from src.loader import filter_flow_journey_campaigns
+            _before = len(dod_df)
+            dod_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(dod_df, _delivery_map)
+            print(f'   -> Excluded {_before - len(dod_df)} Flow/Journey campaigns ({_n_by_type} by type, {_n_by_name} by name), keeping {len(dod_df)}')
 
         # ── Step 3: BU detection — name prefix for anything still missing BU ──
         def _detect_bu(row):
@@ -201,8 +182,19 @@ def main() -> None:
     # build_master()'s first step (tag_bu) runs and needs a real name to
     # match against.
     if args.api:
-        from src.loader import enrich_campaign_metadata
-        raw_df, _, _, _ = enrich_campaign_metadata(raw_df, app_id, secret_key, data_center)
+        from src.loader import enrich_campaign_metadata, filter_flow_journey_campaigns
+        raw_df, _, _delivery_map, _searched_any = enrich_campaign_metadata(
+            raw_df, app_id, secret_key, data_center,
+        )
+        # Same exclusion dod_daily has always had, applied here for the
+        # first time (caught 2026-08-17: master_enriched had accumulated
+        # real journey-step/periodic campaigns since this was never
+        # extended when --api gained a master_enriched target 2026-08-11).
+        if _searched_any:
+            _before = len(raw_df)
+            raw_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(raw_df, _delivery_map)
+            print(f'   -> Excluded {_before - len(raw_df)} Flow/Journey campaigns '
+                  f'({_n_by_type} by type, {_n_by_name} by name), keeping {len(raw_df)}')
 
     print('Building master enriched table...')
     master = build_master(raw_df, lookup_df)

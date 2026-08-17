@@ -603,3 +603,54 @@ def enrich_campaign_metadata(
                 df.loc[df['Campaign ID'] == cid, COL_ANDROID_BODY]  = mv.get('body', '')
 
     return df, tags_map, delivery_map, searched_any
+
+
+def filter_flow_journey_campaigns(df: pd.DataFrame, delivery_map: dict) -> tuple:
+    """Exclude Flow/Journey/triggered campaigns from API-sourced data.
+
+    Originally lived only in run_report.py's dod_daily branch - never
+    applied to the master_enriched --api path, so 2026-05 through 2026-08
+    accumulated real journey-step and periodic-automation campaigns
+    (August_streak_onboarding_call, D0 PN, D13 PN, SMS_D1, etc.) sitting
+    in master_enriched, most tagged bu='Unknown' since they don't match
+    any real BU's naming convention (caught 2026-08-17, via a fresh CSV
+    export that's already correctly "One time" delivery type only,
+    proving these came from the API path, not from any CSV load).
+
+    Two independent signals, verified against live campaigns - neither
+    alone catches everything:
+    - delivery_type: catches PERIODIC/EVENT_TRIGGERED/FLOW/TRANSACTIONAL
+      campaigns (confirmed live: "August_streak_onboarding_call" reports
+      campaign_delivery_type=PERIODIC)
+    - name pattern: catches journey-step children (D0 PN, D13 PN,
+      SMS_D1, etc.) whose OWN campaign_delivery_type MoEngage still
+      reports as ONE_TIME (confirmed live on several) - the automation
+      lives at the parent journey level, not the individual step, so
+      delivery_type alone would miss every one of these.
+
+    NOT everything with a journey-sounding name is actually flow, though -
+    "4th_day_nudge_b" and "Congratulations - 1st stage" both confirmed
+    live as genuinely ONE_TIME, low-volume (1-22 sends) - these read as
+    manually-fired pilot/test sends, not automated journeys, and don't
+    match the name pattern either. Left untouched deliberately.
+
+    Returns (filtered_df, n_excluded_by_type, n_excluded_by_name).
+    """
+    import re
+
+    flow_types = {'EVENT_TRIGGERED', 'PERIODIC', 'TRANSACTIONAL', 'FLOW'}
+    if 'Campaign ID' in df.columns and delivery_map:
+        is_flow_type = df['Campaign ID'].map(delivery_map).isin(flow_types)
+    else:
+        is_flow_type = pd.Series(False, index=df.index)
+
+    journey_pattern = re.compile(
+        r'^(D\d+\s*PN|SMS_D\d+|D\d+_PN|Day\d+|JOURNEY_|FLOW_)',
+        re.IGNORECASE
+    )
+    is_journey_name = df['Campaign Name'].fillna('').apply(
+        lambda x: bool(journey_pattern.match(str(x)))
+    )
+
+    keep = df[~(is_flow_type | is_journey_name)].copy()
+    return keep, int(is_flow_type.sum()), int(is_journey_name.sum())

@@ -6,6 +6,7 @@ from config import COL_ALL_SENT, COL_CAMPAIGN_ID, COL_TAG_UNCATEGORIZED
 from src.loader import (
     load_from_csv, load_lookup_from_csv, load_from_sheets,
     enrich_campaign_metadata, load_from_moengage_api, fetch_campaign_metadata,
+    filter_flow_journey_campaigns,
 )
 
 
@@ -528,3 +529,66 @@ def test_enrich_campaign_metadata_still_searches_when_name_known_but_copy_missin
     assert searched_any is True
     assert df.iloc[0][COL_ANDROID_TITLE] == 'Backfilled Title'
     assert df.iloc[0][COL_ANDROID_BODY] == 'Backfilled Body'
+
+
+# ── filter_flow_journey_campaigns ───────────────────────────────────────────
+# Caught 2026-08-17: this filter existed only in run_report.py's dod_daily
+# branch, never applied to the master_enriched --api path, so real journey/
+# periodic campaigns accumulated there for months. Every case below uses the
+# real campaign names + real campaign_delivery_type values confirmed live via
+# debug_campaign_search.yml (run 32026854325), not hypothetical examples.
+
+def _flow_test_df():
+    rows = [
+        {'Campaign ID': 'c1', 'Campaign Name': 'August_streak_onboarding_call'},  # PERIODIC
+        {'Campaign ID': 'c2', 'Campaign Name': 'D13 PN'},                          # ONE_TIME, name-pattern catch
+        {'Campaign ID': 'c3', 'Campaign Name': 'SMS_D1'},                          # ONE_TIME, name-pattern catch
+        {'Campaign ID': 'c4', 'Campaign Name': '4th_day_nudge_b'},                 # ONE_TIME, NOT flow - keep
+        {'Campaign ID': 'c5', 'Campaign Name': 'Congratulations - 1st stage'},     # ONE_TIME, NOT flow - keep
+        {'Campaign ID': 'c6', 'Campaign Name': 'UPI Failure 2'},                   # ONE_TIME, real campaign - keep
+        {'Campaign ID': 'c7', 'Campaign Name': 'Promo_dotd_1208_3'},               # ONE_TIME, real campaign - keep
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_excludes_by_delivery_type():
+    delivery_map = {'c1': 'PERIODIC'}
+    kept, n_type, n_name = filter_flow_journey_campaigns(_flow_test_df(), delivery_map)
+    assert 'c1' not in kept['Campaign ID'].values
+    assert n_type == 1
+
+
+def test_excludes_journey_step_names_even_when_delivery_type_says_one_time():
+    """D13 PN and SMS_D1 both report ONE_TIME as their own delivery_type
+    (confirmed live) - only the name pattern catches these, delivery_type
+    alone would miss them entirely."""
+    delivery_map = {'c2': 'ONE_TIME', 'c3': 'ONE_TIME'}
+    kept, n_type, n_name = filter_flow_journey_campaigns(_flow_test_df(), delivery_map)
+    assert 'c2' not in kept['Campaign ID'].values
+    assert 'c3' not in kept['Campaign ID'].values
+    assert n_name == 2
+
+
+def test_does_not_exclude_one_time_campaigns_with_journey_sounding_names():
+    """4th_day_nudge_b and Congratulations - 1st stage both confirmed live
+    as genuinely ONE_TIME, low-volume, not matching the name pattern -
+    must NOT be excluded just because they sound journey-like."""
+    delivery_map = {'c4': 'ONE_TIME', 'c5': 'ONE_TIME'}
+    kept, n_type, n_name = filter_flow_journey_campaigns(_flow_test_df(), delivery_map)
+    assert 'c4' in kept['Campaign ID'].values
+    assert 'c5' in kept['Campaign ID'].values
+
+
+def test_real_campaigns_unaffected():
+    delivery_map = {'c6': 'ONE_TIME', 'c7': 'ONE_TIME'}
+    kept, n_type, n_name = filter_flow_journey_campaigns(_flow_test_df(), delivery_map)
+    assert 'c6' in kept['Campaign ID'].values
+    assert 'c7' in kept['Campaign ID'].values
+
+
+def test_empty_delivery_map_does_not_crash():
+    """No delivery_map (e.g. Step 2 never ran) must fall back to
+    name-pattern-only filtering, not error."""
+    kept, n_type, n_name = filter_flow_journey_campaigns(_flow_test_df(), {})
+    assert n_type == 0
+    assert 'c2' not in kept['Campaign ID'].values  # name pattern still catches D13 PN
