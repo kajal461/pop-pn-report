@@ -76,8 +76,15 @@ def build_summary_bu(master: pd.DataFrame) -> pd.DataFrame:
 
     # Weekly — WOW deltas
     # Create a readable week label like "2026-03-W12"
+    # sent_week round-trips through BigQuery as float64 (nullable ints have
+    # no native BQ type, so a column with any NULLs comes back as float) -
+    # astype(str) on a float produces "12.0", not "12". Route through
+    # nullable Int64 first so the label reads "W12", not "W12.0" (caught
+    # 2026-08-17: every single weekly period_label in this table had this
+    # ".0" suffix, going back to the earliest history).
+    _week_int = pd.to_numeric(master['sent_week'], errors='coerce').astype('Int64')
     master['sent_week_label'] = (
-        master['sent_month'].str[:7] + '-W' + master['sent_week'].astype(str).str.zfill(2)
+        master['sent_month'].str[:7] + '-W' + _week_int.astype(str).str.zfill(2)
     )
     weekly = _aggregate(master, 'sent_week_label')
     weekly['period_type'] = 'Weekly'

@@ -37,3 +37,20 @@ def test_summary_bu_campaign_count():
     monthly = df[df['period_type'] == 'Monthly']
     upi_mar = monthly[(monthly['bu'] == 'UPI') & (monthly['period_label'] == '2026-03')]
     assert upi_mar.iloc[0]['campaign_count'] == 1
+
+
+def test_weekly_period_label_has_no_float_suffix_after_bigquery_roundtrip():
+    """Caught 2026-08-17: every weekly period_label in the live table read
+    'W34.0', 'W12.0', etc. sent_week has no native BigQuery integer type
+    when the column contains any NULLs (nullable ints round-trip as
+    float64), so master read back FROM BigQuery has sent_week as 12.0,
+    not 12 - the existing fixture above uses a plain Python int, which
+    never reproduces this. Reproduce the real shape explicitly."""
+    master = _master()
+    master['sent_week'] = master['sent_week'].astype(float)  # exact BQ round-trip shape
+    df = build_summary_bu(master)
+    weekly = df[df['period_type'] == 'Weekly']
+    assert len(weekly) > 0
+    for label in weekly['period_label']:
+        assert '.0' not in label, f"period_label {label!r} still has a float suffix"
+    assert 'W11' in weekly['period_label'].tolist()[0]

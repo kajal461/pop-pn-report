@@ -34,12 +34,31 @@ def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_top_bottom(master: pd.DataFrame) -> pd.DataFrame:
-    """Build Top 5 and Bottom 5 campaigns per month, ranked by CTR. Min 500 sent."""
+    """Build Top 5 and Bottom 5 campaigns per month, ranked by CTR. Min 500 sent.
+
+    Excludes campaigns with an unresolved sent_month (literal 'NaT' string,
+    not a true null - groupby would otherwise treat it as its own real
+    "month") or a blank Campaign_Name - a handful of campaigns the Search
+    API genuinely couldn't resolve (see enrich_campaign_metadata) have real
+    sent/CTR numbers but no identifying info at all. A high-CTR campaign
+    with no name isn't a useful "top performer" to show anyone (caught
+    2026-08-17: 4 such rows were ranked in live Top/Bottom lists with
+    Campaign_Name='' and bu='Unknown').
+    """
     df = _normalize_cols(master.copy())  # handles both BigQuery (underscores) and raw (spaces)
     df[COL_ALL_SENT] = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
     df[COL_ALL_CTR]  = pd.to_numeric(df[COL_ALL_CTR], errors='coerce').fillna(0)
 
-    eligible = df[df[COL_ALL_SENT] >= MIN_SENT_THRESHOLD].copy()
+    has_valid_month = (
+        df['sent_month'].notna() & ~df['sent_month'].astype(str).isin(['NaT', 'nan', 'None', ''])
+        if 'sent_month' in df.columns else pd.Series(True, index=df.index)
+    )
+    has_name = (
+        df[COL_CAMPAIGN_NAME].notna() & (df[COL_CAMPAIGN_NAME].astype(str).str.strip() != '')
+        if COL_CAMPAIGN_NAME in df.columns else pd.Series(True, index=df.index)
+    )
+
+    eligible = df[(df[COL_ALL_SENT] >= MIN_SENT_THRESHOLD) & has_valid_month & has_name].copy()
 
     frames = []
     for _, group in eligible.groupby('sent_month'):
