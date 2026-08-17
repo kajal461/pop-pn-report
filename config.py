@@ -228,6 +228,18 @@ MIN_SENT_THRESHOLD = 500   # minimum All Platform Sent to be included in Top/Bot
 TOP_N = 5                  # number of campaigns shown in top and bottom ranking tables
 LECTURE_MAX_WORDS = 30     # body word count above this threshold signals a Lecture-y PN
 
+# All_Platform_CTR is MoEngage's own field, correctly computed as
+# Clicks / Impressions - NOT Clicks / Sent. Caught 2026-08-17: 45 campaigns
+# have Impressions catastrophically below Sent (e.g. 1,733 sent, 1
+# impression recorded, 1 click -> a mathematically correct but meaningless
+# "100% CTR"). Not a bug in this pipeline - MoEngage's own field, correctly
+# computed against its own denominator - but comparing/ranking campaigns by
+# CTR only makes sense when enough impressions were actually recorded to
+# trust the ratio. Confirmed live: broken campaigns top out at 28.3%
+# impression rate, normal campaigns sit at 66.7%+ (25th percentile) - clean
+# separation, no normal campaign sits anywhere near this threshold.
+MIN_IMPRESSION_RATE = 0.30   # Impressions / Sent must be >= this to be eligible for CTR ranking
+
 # ── BigQuery output configuration ─────────────────────────────────────────────
 BQ_DATASET = 'pn_report'   # BigQuery dataset name — created automatically on first run
 BQ_LOCATION = 'US'         # Dataset location — change to 'asia-south1' if needed

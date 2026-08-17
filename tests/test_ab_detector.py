@@ -73,3 +73,49 @@ def test_ctr_tie_marks_both_as_winners():
     # Both marked as winner when CTR is identical — no tiebreaker defined
     assert all(tie_rows['ab_winner'])
     assert all(tie_rows['ab_lift_ctr'] == 0.0)
+
+
+def _ab_pair_with_sent_and_impressions(v1_ctr, v1_sent, v1_impr, v2_ctr, v2_sent, v2_impr):
+    row = {
+        'Goal 1 Click Through Converted Users All Platform': 0,
+        'Goal 2 Click Through Converted Users All Platform': 0,
+        'Goal 3 Click Through Converted Users All Platform': 0,
+        'Goal 4 Click Through Converted Users All Platform': 0,
+        'Goal 5 Click Through Converted Users All Platform': 0,
+    }
+    return pd.DataFrame([
+        {**row, 'Campaign ID': 'ab', 'Variation': 1, 'All Platform CTR': v1_ctr,
+         'All Platform Sent': v1_sent, 'All Platform Impressions': v1_impr},
+        {**row, 'Campaign ID': 'ab', 'Variation': 2, 'All Platform CTR': v2_ctr,
+         'All Platform Sent': v2_sent, 'All Platform Impressions': v2_impr},
+    ])
+
+
+def test_winner_excludes_variation_with_unreliable_impression_tracking():
+    """Caught 2026-08-17 in the live table: All_Platform_CTR is MoEngage's
+    own field, correctly computed as Clicks/Impressions - a variation
+    whose impression tracking barely fired (e.g. 1 impression despite
+    1,700+ sent) can show a spuriously huge CTR from the tracking gap
+    alone, not real performance. Variation 2 here has a much higher raw
+    CTR (100% vs 5%) but only 1 impression out of 2000 sent - variation 1
+    must win instead, since it's the only one with trustworthy tracking."""
+    df = detect_ab(_ab_pair_with_sent_and_impressions(
+        v1_ctr=5.0,   v1_sent=2000, v1_impr=1800,   # normal: 90% impression rate
+        v2_ctr=100.0, v2_sent=2000, v2_impr=1,       # broken: 0.05% impression rate
+    ))
+    winner = df[df['ab_winner'] == True]
+    assert len(winner) == 1
+    assert float(winner.iloc[0]['All Platform CTR']) == 5.0
+
+
+def test_winner_falls_back_to_full_group_when_no_variation_is_reliable():
+    """If NEITHER variation has reliable tracking, still produce a winner
+    (degraded, but better than silently dropping the pair) rather than
+    erroring or leaving ab_winner False for both."""
+    df = detect_ab(_ab_pair_with_sent_and_impressions(
+        v1_ctr=50.0, v1_sent=2000, v1_impr=2,   # both broken
+        v2_ctr=80.0, v2_sent=2000, v2_impr=3,
+    ))
+    winner = df[df['ab_winner'] == True]
+    assert len(winner) == 1
+    assert float(winner.iloc[0]['All Platform CTR']) == 80.0

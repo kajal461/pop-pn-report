@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.bq_loader import load_all, load_table, load_dod_daily
-from config import MIN_SENT_THRESHOLD
+from config import MIN_SENT_THRESHOLD, MIN_IMPRESSION_RATE
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -1462,10 +1462,19 @@ elif page == '✍️ Copy Intelligence':
         master_copy = filtered_master.copy()
         master_copy['All_Platform_CTR']  = pd.to_numeric(master_copy['All_Platform_CTR'], errors='coerce')
         master_copy['All_Platform_Sent'] = pd.to_numeric(master_copy.get('All_Platform_Sent', 0), errors='coerce')
+        master_copy['All_Platform_Impressions'] = pd.to_numeric(master_copy.get('All_Platform_Impressions', 0), errors='coerce').fillna(0)
+        # All_Platform_CTR is MoEngage's own field, correctly computed as
+        # Clicks/Impressions - not Clicks/Sent. Caught 2026-08-17: campaigns
+        # with near-zero impression tracking (e.g. 1,733 sent, 1 impression,
+        # 1 click) produce a mathematically correct but meaningless "100%
+        # CTR" that would otherwise show up as a "Top Campaign". The <=100
+        # cap alone doesn't catch this - three separate campaigns tied at
+        # exactly 100.00% were all showing in the live Top 3.
         master_copy = master_copy[
             (master_copy['All_Platform_Sent'] >= MIN_SENT_THRESHOLD) &
             (master_copy['All_Platform_CTR'] <= 100) &
-            (master_copy['All_Platform_CTR'].notna())
+            (master_copy['All_Platform_CTR'].notna()) &
+            (master_copy['All_Platform_Impressions'] >= master_copy['All_Platform_Sent'] * MIN_IMPRESSION_RATE)
         ]
 
         def _sfmt(v):

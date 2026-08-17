@@ -68,3 +68,32 @@ def test_nat_sent_month_excluded():
     df = build_top_bottom(master)
     assert 'NaT' not in df['sent_month'].astype(str).values
     assert 'c0' not in df['Campaign ID'].values
+
+
+def test_unreliable_impression_tracking_excluded_even_with_inflated_ctr():
+    """Caught 2026-08-17 in the live table: 45 campaigns have Impressions
+    catastrophically below Sent (e.g. 1,733 sent, 1 impression, 1 click).
+    All_Platform_CTR is MoEngage's own field, correctly computed as
+    Clicks/Impressions - so this produces a mathematically correct but
+    meaningless "100% CTR" that would otherwise win 'Top Campaign'. Give
+    one row a tiny impression count and a huge CTR to match, and confirm
+    it gets excluded despite being the highest CTR in the pool."""
+    master = _master()
+    master.loc[7, 'All Platform Impressions'] = 1  # was 6300; sent stays 4500 -> rate ~0.02%
+    master.loc[7, 'All Platform CTR'] = 100.0        # far higher than any other row
+    df = build_top_bottom(master)
+    top = df[df['rank_type'] == 'Top']
+    assert 'c7' not in top['Campaign ID'].values
+    top1 = df[(df['rank_type'] == 'Top') & (df['rank'] == 1)]
+    assert top1.iloc[0]['Campaign ID'] == 'c6'  # next-highest reliable CTR
+
+
+def test_normal_impression_rate_not_excluded():
+    """Guard against the fix being too aggressive - every row in the base
+    fixture except i=0 (0 impressions, a pre-existing edge case in this
+    fixture, already excluded via other criteria in adjacent tests) has a
+    normal impression rate and must remain eligible."""
+    df = build_top_bottom(_master())
+    all_ids = set(df['Campaign ID'].values)
+    for i in range(1, 8):
+        assert f'c{i}' in all_ids

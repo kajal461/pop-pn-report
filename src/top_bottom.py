@@ -3,7 +3,7 @@ import pandas as pd
 from config import (
     COL_CAMPAIGN_ID, COL_CAMPAIGN_NAME, COL_ALL_CTR, COL_ALL_SENT,
     COL_ALL_CLICKS, COL_ALL_IMPRESSIONS, COL_ALL_UPLIFT,
-    COL_ANDROID_TITLE, COL_ANDROID_BODY, MIN_SENT_THRESHOLD, TOP_N,
+    COL_ANDROID_TITLE, COL_ANDROID_BODY, MIN_SENT_THRESHOLD, MIN_IMPRESSION_RATE, TOP_N,
 )
 
 OUTPUT_COLS = [
@@ -44,10 +44,18 @@ def build_top_bottom(master: pd.DataFrame) -> pd.DataFrame:
     with no name isn't a useful "top performer" to show anyone (caught
     2026-08-17: 4 such rows were ranked in live Top/Bottom lists with
     Campaign_Name='' and bu='Unknown').
+
+    Also excludes campaigns with unreliable impression tracking. CTR here
+    is MoEngage's own field, correctly computed as Clicks/Impressions -
+    but 45 live campaigns have Impressions catastrophically below Sent
+    (e.g. 1,733 sent, 1 impression, 1 click -> a mathematically correct
+    but meaningless "100% CTR" that would otherwise win "Top Campaign").
+    See MIN_IMPRESSION_RATE in config.py for the confirmed-clean threshold.
     """
     df = _normalize_cols(master.copy())  # handles both BigQuery (underscores) and raw (spaces)
-    df[COL_ALL_SENT] = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
-    df[COL_ALL_CTR]  = pd.to_numeric(df[COL_ALL_CTR], errors='coerce').fillna(0)
+    df[COL_ALL_SENT]        = pd.to_numeric(df[COL_ALL_SENT], errors='coerce').fillna(0)
+    df[COL_ALL_CTR]         = pd.to_numeric(df[COL_ALL_CTR], errors='coerce').fillna(0)
+    df[COL_ALL_IMPRESSIONS] = pd.to_numeric(df.get(COL_ALL_IMPRESSIONS, 0), errors='coerce').fillna(0)
 
     has_valid_month = (
         df['sent_month'].notna() & ~df['sent_month'].astype(str).isin(['NaT', 'nan', 'None', ''])
@@ -57,8 +65,13 @@ def build_top_bottom(master: pd.DataFrame) -> pd.DataFrame:
         df[COL_CAMPAIGN_NAME].notna() & (df[COL_CAMPAIGN_NAME].astype(str).str.strip() != '')
         if COL_CAMPAIGN_NAME in df.columns else pd.Series(True, index=df.index)
     )
+    has_reliable_impressions = (
+        df[COL_ALL_IMPRESSIONS] >= df[COL_ALL_SENT] * MIN_IMPRESSION_RATE
+    )
 
-    eligible = df[(df[COL_ALL_SENT] >= MIN_SENT_THRESHOLD) & has_valid_month & has_name].copy()
+    eligible = df[
+        (df[COL_ALL_SENT] >= MIN_SENT_THRESHOLD) & has_valid_month & has_name & has_reliable_impressions
+    ].copy()
 
     frames = []
     for _, group in eligible.groupby('sent_month'):
