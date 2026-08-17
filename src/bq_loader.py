@@ -19,8 +19,23 @@ def _client() -> bigquery.Client:
     Create BigQuery client.
     - Local: reads from KEY_PATH (credentials/service_account.json)
     - Streamlit Cloud: reads from st.secrets['gcp_service_account'] dict
+
+    Checks the local file FIRST, not st.secrets. Caught 2026-08-17: merely
+    accessing 'in st.secrets' when no secrets.toml exists makes Streamlit
+    itself render a "No secrets files found" warning directly into the
+    app - it's not a raised exception, so the try/except below never
+    caught it, and it fired once per cached data-loading call (up to 8
+    times per page load). credentials/ is git-ignored (confirmed), so it
+    genuinely won't exist on the deployed Streamlit Cloud copy - checking
+    it first is safe there too, it just falls through to secrets.
     """
-    # Try Streamlit Cloud secrets first (deployed environment)
+    if os.path.exists(KEY_PATH):
+        creds = service_account.Credentials.from_service_account_file(
+            KEY_PATH, scopes=['https://www.googleapis.com/auth/cloud-platform']
+        )
+        return bigquery.Client(project=PROJECT_ID, credentials=creds)
+
+    # Local file not found - likely Streamlit Cloud, try secrets
     try:
         if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
             # Convert AttrDict to plain dict
@@ -35,11 +50,12 @@ def _client() -> bigquery.Client:
             return bigquery.Client(project=PROJECT_ID, credentials=creds)
     except Exception:
         pass
-    # Fallback: local file-based credentials
-    creds = service_account.Credentials.from_service_account_file(
-        KEY_PATH, scopes=['https://www.googleapis.com/auth/cloud-platform']
+
+    raise FileNotFoundError(
+        f'No BigQuery credentials found - checked local file {KEY_PATH!r} '
+        f"and Streamlit secrets['gcp_service_account']. Set GOOGLE_CLOUD_KEY_PATH "
+        f"or configure secrets.toml."
     )
-    return bigquery.Client(project=PROJECT_ID, credentials=creds)
 
 
 @st.cache_data(ttl=3600)
