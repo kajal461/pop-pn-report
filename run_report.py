@@ -128,11 +128,19 @@ def main() -> None:
             dod_df, app_id, secret_key, data_center,
         )
 
-        if _searched_any:
-            from src.loader import filter_flow_journey_campaigns
-            _before = len(dod_df)
-            dod_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(dod_df, _delivery_map)
-            print(f'   -> Excluded {_before - len(dod_df)} Flow/Journey campaigns ({_n_by_type} by type, {_n_by_name} by name), keeping {len(dod_df)}')
+        # NOT gated on _searched_any: the name-pattern half of this filter
+        # only needs Campaign Name, which is available whether it came from
+        # Step 1 (master_enriched lookup) or Step 2 (Search API) - gating
+        # the whole filter on Step 2 having run meant any day where every
+        # campaign was already known via Step 1 let journey names straight
+        # through unfiltered. Caught 2026-08-17: 16 such rows were already
+        # sitting in the live dod_daily table. filter_flow_journey_campaigns
+        # itself already degrades delivery_type checking gracefully when
+        # _delivery_map is empty, so it's always safe to call.
+        from src.loader import filter_flow_journey_campaigns
+        _before = len(dod_df)
+        dod_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(dod_df, _delivery_map)
+        print(f'   -> Excluded {_before - len(dod_df)} Flow/Journey campaigns ({_n_by_type} by type, {_n_by_name} by name), keeping {len(dod_df)}')
 
         # ── Step 3: BU detection — name prefix for anything still missing BU ──
         def _detect_bu(row):
@@ -190,11 +198,13 @@ def main() -> None:
         # first time (caught 2026-08-17: master_enriched had accumulated
         # real journey-step/periodic campaigns since this was never
         # extended when --api gained a master_enriched target 2026-08-11).
-        if _searched_any:
-            _before = len(raw_df)
-            raw_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(raw_df, _delivery_map)
-            print(f'   -> Excluded {_before - len(raw_df)} Flow/Journey campaigns '
-                  f'({_n_by_type} by type, {_n_by_name} by name), keeping {len(raw_df)}')
+        # NOT gated on _searched_any - see the matching comment in the
+        # dod_daily branch above; the same quirk was found live in
+        # dod_daily itself (16 rows), not just a theoretical risk here.
+        _before = len(raw_df)
+        raw_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(raw_df, _delivery_map)
+        print(f'   -> Excluded {_before - len(raw_df)} Flow/Journey campaigns '
+              f'({_n_by_type} by type, {_n_by_name} by name), keeping {len(raw_df)}')
 
     print('Building master enriched table...')
     master = build_master(raw_df, lookup_df)
