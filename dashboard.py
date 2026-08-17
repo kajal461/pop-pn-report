@@ -27,22 +27,27 @@ def _check_password() -> bool:
     """Simple password gate. Password stored in env var (local) or Streamlit
     secrets (deployed).
 
-    Checks the env var FIRST, not st.secrets. Caught 2026-08-17: merely
-    calling st.secrets.get(...) when no secrets.toml exists makes
-    Streamlit itself render a "No secrets files found" warning directly
-    into the app - not a raised exception, so the try/except here never
-    caught it. Checking the env var first means local dev (where
-    DASHBOARD_PASSWORD isn't set via secrets at all) never touches
-    st.secrets.
+    First attempt (env-var-first, still fell through to st.secrets when
+    the env var wasn't set) didn't fully fix this - verified live rather
+    than assumed. The actual trigger is accessing st.secrets AT ALL when
+    no secrets.toml file exists on disk, regardless of whether the
+    specific key is set - not a raised exception, so no try/except here
+    can catch it. Only probe st.secrets if a secrets.toml file is
+    actually present at one of Streamlit's own documented paths (the
+    same two paths Streamlit's own warning message names).
     """
     import os
     correct = os.getenv('DASHBOARD_PASSWORD', '')
     if not correct:
-        # Not set locally - only then check Streamlit secrets (deployed)
-        try:
-            correct = st.secrets.get('DASHBOARD_PASSWORD', '')
-        except Exception:
-            correct = ''
+        _secrets_paths = [
+            os.path.expanduser('~/.streamlit/secrets.toml'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '.streamlit', 'secrets.toml'),
+        ]
+        if any(os.path.exists(p) for p in _secrets_paths):
+            try:
+                correct = st.secrets.get('DASHBOARD_PASSWORD', '')
+            except Exception:
+                correct = ''
 
     if not correct:
         return True  # No password configured — allow access (local dev)
