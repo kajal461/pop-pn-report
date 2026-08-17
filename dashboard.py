@@ -24,13 +24,25 @@ st.set_page_config(
 
 # ── Password gate — protects business-sensitive data ──────────────────────────
 def _check_password() -> bool:
-    """Simple password gate. Password stored in Streamlit secrets or env var."""
+    """Simple password gate. Password stored in env var (local) or Streamlit
+    secrets (deployed).
+
+    Checks the env var FIRST, not st.secrets. Caught 2026-08-17: merely
+    calling st.secrets.get(...) when no secrets.toml exists makes
+    Streamlit itself render a "No secrets files found" warning directly
+    into the app - not a raised exception, so the try/except here never
+    caught it. Checking the env var first means local dev (where
+    DASHBOARD_PASSWORD isn't set via secrets at all) never touches
+    st.secrets.
+    """
     import os
-    # Get password from Streamlit secrets (deployed) or env var (local)
-    try:
-        correct = st.secrets.get('DASHBOARD_PASSWORD', os.getenv('DASHBOARD_PASSWORD', ''))
-    except Exception:
-        correct = os.getenv('DASHBOARD_PASSWORD', '')
+    correct = os.getenv('DASHBOARD_PASSWORD', '')
+    if not correct:
+        # Not set locally - only then check Streamlit secrets (deployed)
+        try:
+            correct = st.secrets.get('DASHBOARD_PASSWORD', '')
+        except Exception:
+            correct = ''
 
     if not correct:
         return True  # No password configured — allow access (local dev)
