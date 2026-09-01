@@ -1089,14 +1089,29 @@ elif page == '🏢 BU Performance':
     insight_items = []
     if not monthly.empty and 'period_label' in monthly.columns and 'All_Platform_CTR' in monthly.columns:
         latest_data = monthly[monthly['period_label'] == latest_month].copy()
-        if not latest_data.empty:
-            best_idx = latest_data['All_Platform_CTR'].idxmax()
-            best_bu = latest_data.loc[best_idx, 'bu']
-            best_ctr = latest_data.loc[best_idx, 'All_Platform_CTR']
+        # Minimum campaign count before a "leads this month" / "improved
+        # most" pick is trustworthy enough to headline - same convention
+        # used for the tonality/BU picks on Executive Overview. Caught
+        # 2026-09-01 via a live recheck: "Unknown" (a data-quality catch-
+        # all, not a real BU) headlined as both "leads this month" and
+        # "improved the most MOM" off a single campaign (1 -> 2 month-over-
+        # month). "Review its top campaigns for copy patterns to
+        # replicate" is not an actionable instruction for an n=1 sample.
+        _MIN_BU_CAMPAIGNS = 10
+        if 'campaign_count' in latest_data.columns:
+            latest_data_reliable = latest_data[
+                pd.to_numeric(latest_data['campaign_count'], errors='coerce').fillna(0) >= _MIN_BU_CAMPAIGNS
+            ]
+        else:
+            latest_data_reliable = latest_data
+        if not latest_data_reliable.empty:
+            best_idx = latest_data_reliable['All_Platform_CTR'].idxmax()
+            best_bu = latest_data_reliable.loc[best_idx, 'bu']
+            best_ctr = latest_data_reliable.loc[best_idx, 'All_Platform_CTR']
             insight_items.append(f"🏆 **{best_bu}** leads this month with **{best_ctr:.2f}% CTR** — review its top campaigns for copy patterns to replicate.")
 
-            if 'mom_ctr_delta_pct' in latest_data.columns:
-                valid_mom = latest_data.dropna(subset=['mom_ctr_delta_pct'])
+            if 'mom_ctr_delta_pct' in latest_data_reliable.columns:
+                valid_mom = latest_data_reliable.dropna(subset=['mom_ctr_delta_pct'])
                 if not valid_mom.empty:
                     top_idx = valid_mom['mom_ctr_delta_pct'].idxmax()
                     top_bu = valid_mom.loc[top_idx, 'bu']
@@ -2617,7 +2632,8 @@ elif page == '⏰ Timing & Frequency':
         st.markdown('<div class="section-header">CTR by Time Slot</div>', unsafe_allow_html=True)
         st.caption('Dawn 4–7am · Morning 7–10am · Mid-day 10am–2pm · Evening 2–7pm · Night 7pm+')
         if 'time_slot_bucket' in m.columns:
-            ts = m.groupby('time_slot_bucket')['All_Platform_CTR_reliable'].mean().reset_index()
+            ts = m.groupby('time_slot_bucket')['All_Platform_CTR_reliable'].mean().reset_index().rename(
+                columns={'All_Platform_CTR_reliable': 'All_Platform_CTR'})
             slot_order = ['Dawn', 'Morning', 'Mid-day', 'Evening', 'Night', 'Other']
             ts['time_slot_bucket'] = pd.Categorical(ts['time_slot_bucket'], categories=[s for s in slot_order if s in ts['time_slot_bucket'].values], ordered=True)
             ts = ts.sort_values('time_slot_bucket').dropna()
@@ -2641,7 +2657,8 @@ elif page == '⏰ Timing & Frequency':
         st.markdown('<div class="section-header">CTR by Day of Week</div>', unsafe_allow_html=True)
         st.caption('Which day drives the highest engagement?')
         if 'sent_day_of_week' in m.columns:
-            dow = m.groupby('sent_day_of_week')['All_Platform_CTR_reliable'].mean().reset_index()
+            dow = m.groupby('sent_day_of_week')['All_Platform_CTR_reliable'].mean().reset_index().rename(
+                columns={'All_Platform_CTR_reliable': 'All_Platform_CTR'})
             day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
             dow['sent_day_of_week'] = pd.Categorical(dow['sent_day_of_week'], categories=[d for d in day_order if d in dow['sent_day_of_week'].values], ordered=True)
             dow = dow.sort_values('sent_day_of_week').dropna()
@@ -2665,7 +2682,8 @@ elif page == '⏰ Timing & Frequency':
     st.markdown('<div class="section-header">CTR Heatmap — Hour × Day of Week</div>', unsafe_allow_html=True)
     if 'sent_hour' in m.columns and 'sent_day_of_week' in m.columns:
         # Build CTR pivot AND campaign count pivot
-        heat_ctr   = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR_reliable'].mean().reset_index()
+        heat_ctr   = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR_reliable'].mean().reset_index().rename(
+            columns={'All_Platform_CTR_reliable': 'All_Platform_CTR'})
         heat_count = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].count().reset_index()
         heat_ctr['sent_hour']   = pd.to_numeric(heat_ctr['sent_hour'],   errors='coerce')
         heat_count['sent_hour'] = pd.to_numeric(heat_count['sent_hour'], errors='coerce')
@@ -2768,7 +2786,8 @@ elif page == '⏰ Timing & Frequency':
         st.markdown('<div class="section-header">Payday Week vs Rest of Month</div>', unsafe_allow_html=True)
         st.caption('Days 1–7 of the month (salary credit period) vs rest')
         if 'day_of_month_bucket' in m.columns:
-            pay = m.groupby('day_of_month_bucket')['All_Platform_CTR_reliable'].mean().reset_index()
+            pay = m.groupby('day_of_month_bucket')['All_Platform_CTR_reliable'].mean().reset_index().rename(
+                columns={'All_Platform_CTR_reliable': 'All_Platform_CTR'})
             pay_ctrs = pay['All_Platform_CTR'].tolist()
             pay_mx = max(pay_ctrs) if pay_ctrs else 1
             pay_cols = ['#22c55e' if c==pay_mx else '#ef4444' for c in pay_ctrs]
@@ -2789,7 +2808,8 @@ elif page == '⏰ Timing & Frequency':
         st.caption('Do your Gen Z users engage more on weekends?')
         if 'is_weekend' in m.columns:
             m['_wknd_label'] = m['is_weekend'].apply(lambda x: 'Weekend' if (x is True or str(x).lower()=='true') else 'Weekday')
-            wknd = m.groupby('_wknd_label')['All_Platform_CTR_reliable'].mean().reset_index()
+            wknd = m.groupby('_wknd_label')['All_Platform_CTR_reliable'].mean().reset_index().rename(
+                columns={'All_Platform_CTR_reliable': 'All_Platform_CTR'})
             wknd_ctrs = wknd['All_Platform_CTR'].tolist()
             wknd_mx = max(wknd_ctrs) if wknd_ctrs else 1
             wknd_cols = ['#22c55e' if c==wknd_mx else '#ef4444' for c in wknd_ctrs]
@@ -3325,8 +3345,37 @@ elif page == '📡 Channel Intelligence':
     st.caption('Campaign-weighted avg CTR per month. Controls for volume — a genuine improvement signal, not a scale-up artifact.')
 
     if 'sent_month' in m.columns and 'All_Platform_CTR' in m.columns:
+        # Manual sent-weighted average - a DIFFERENT code idiom from the
+        # .mean()-based aggregations already fixed elsewhere, so it was
+        # missed by that earlier sweep. Same vulnerability: sent-weighting
+        # alone does not protect against unreliable impression tracking (a
+        # campaign with near-zero impressions still has a normal-sized Sent
+        # weight, multiplied by its meaningless inflated CTR). Caught
+        # 2026-09-01 via a live recheck: this exact section showed "37.39%
+        # -> 0.56%" for its 3-month trend, reproducing the same March 2026
+        # distortion already fixed in brand_impact_builder.py and
+        # summary_overall.py. Replaces the weaker clip(upper=100) below
+        # with the same reliability-column substitution used throughout
+        # this file (see All_Platform_CTR_reliable, defined once near
+        # filtered_master).
+        def _improve_weighted_ctr(g):
+            # Exclude unreliable rows from BOTH numerator and denominator -
+            # not fillna(0), which would understate CTR by treating "we
+            # can't trust this row's CTR" as "this row had 0% CTR" (a
+            # different but equally real "downgrade" bug). Falls back to
+            # the full group only if NOTHING that month has reliable
+            # tracking (same pattern as ab_detector.py / brand_impact_builder.py).
+            if 'All_Platform_CTR_reliable' in g.columns:
+                reliable = g[g['All_Platform_CTR_reliable'].notna()]
+                pool = reliable if not reliable.empty else g
+                ctr_col = 'All_Platform_CTR_reliable' if not reliable.empty else 'All_Platform_CTR'
+            else:
+                pool, ctr_col = g, 'All_Platform_CTR'
+            denom = pool['All_Platform_Sent'].sum()
+            return (pool[ctr_col] * pool['All_Platform_Sent']).sum() / denom if denom > 0 else 0
+
         improve = m.groupby('sent_month').apply(lambda g: pd.Series({
-            'weighted_ctr': (g['All_Platform_CTR']*g['All_Platform_Sent']).sum() / g['All_Platform_Sent'].sum() if g['All_Platform_Sent'].sum()>0 else 0,
+            'weighted_ctr': _improve_weighted_ctr(g),
             'campaigns': g[camp_col_ci].nunique() if camp_col_ci in g.columns else len(g),
             'total_sent': g['All_Platform_Sent'].sum(),
         })).reset_index().sort_values('sent_month')
@@ -4087,6 +4136,7 @@ elif page == '📅 Day-Over-Day (DOD)':
 
     # ── Normalise column types ────────────────────────────────────────────────
     _num_cols = ['All_Platform_Sent','All_Platform_CTR','All_Platform_Clicks',
+                 'All_Platform_Impressions',
                  'primary_conversions','All_Platform_FCM_Delivery_Rate',
                  'click_to_convert_rate','end_to_end_funnel_rate','reachability_rate']
     for _c in _num_cols:
@@ -4112,18 +4162,49 @@ elif page == '📅 Day-Over-Day (DOD)':
             return pd.DataFrame()
         _s    = 'All_Platform_Sent'
         _ctr  = 'All_Platform_CTR'
+        _impr = 'All_Platform_Impressions'
         _name = 'Campaign_Name' if 'Campaign_Name' in df.columns else (
                 'Campaign_ID'   if 'Campaign_ID'   in df.columns else df.columns[0])
         _conv = 'primary_conversions'
         df = df.copy()
-        df['_wt_clicks'] = df[_s] * df[_ctr] / 100 if _ctr in df.columns else 0
+        # _wt_clicks = Sent * CTR/100 is "implied clicks" for the day's
+        # weighted-CTR calc below. Same vulnerability already fixed
+        # elsewhere in this file: a campaign with near-zero impressions
+        # despite a real sent count reports a meaningless inflated CTR
+        # (e.g. 3000%), and multiplying that by a normal Sent count
+        # produces an implied-clicks number far larger than the campaign's
+        # real clicks - badly skewing the day's aggregate, especially on a
+        # day with few total campaigns. dod_daily is a separate data source
+        # from filtered_master (no pre-computed reliability column
+        # available here), so the check is applied fresh.
+        #
+        # Unreliable rows are excluded from BOTH the implied-clicks
+        # numerator AND a separate "_ctr_denom_sent" used only for the CTR
+        # ratio - NOT from the plain "sent" total below, which must reflect
+        # true volume regardless of tracking quality. Zeroing only the
+        # numerator while keeping full Sent in the CTR's own denominator
+        # would silently treat "we don't trust this CTR" as "this campaign
+        # had 0% CTR", understating the day's true CTR - the same class of
+        # wrong-number bug already fixed elsewhere, just downward instead
+        # of upward.
+        if _ctr in df.columns and _s in df.columns:
+            if _impr in df.columns:
+                _has_reliable = pd.to_numeric(df[_impr], errors='coerce').fillna(0) >= df[_s] * MIN_IMPRESSION_RATE
+            else:
+                _has_reliable = pd.Series(True, index=df.index)
+            df['_wt_clicks']      = (df[_s] * df[_ctr] / 100).where(_has_reliable, 0)
+            df['_ctr_denom_sent'] = df[_s].where(_has_reliable, 0)
+        else:
+            df['_wt_clicks'] = 0
+            df['_ctr_denom_sent'] = 0
         agg = df.groupby('sent_date').agg(
             campaigns=(_name, 'nunique'),   # unique names = true campaign count
             sent=(_s, 'sum') if _s in df.columns else (_name, 'count'),
             wt_clicks=('_wt_clicks', 'sum'),
+            ctr_denom_sent=('_ctr_denom_sent', 'sum'),
             conversions=(_conv, 'sum') if _conv in df.columns else (_name, 'count'),
         ).reset_index()
-        agg['ctr'] = (agg['wt_clicks'] / agg['sent'].replace(0, float('nan')) * 100).fillna(0).round(2)
+        agg['ctr'] = (agg['wt_clicks'] / agg['ctr_denom_sent'].replace(0, float('nan')) * 100).fillna(0).round(2)
         return agg.sort_values('sent_date')
 
     _daily = _day_agg(dod_raw)
@@ -4178,7 +4259,13 @@ elif page == '📅 Day-Over-Day (DOD)':
     # ── MTD aggregates ────────────────────────────────────────────────────────
     _mtd_sent  = float(_daily['sent'].sum())       if not _daily.empty else 0
     _mtd_wt_cl = float((_daily['wt_clicks']).sum()) if 'wt_clicks' in _daily.columns else 0
-    _mtd_ctr   = (_mtd_wt_cl / _mtd_sent * 100)   if _mtd_sent else 0
+    # CTR ratio must use the same reliability-filtered denominator as the
+    # numerator (see _day_agg's ctr_denom_sent) - dividing by the unfiltered
+    # _mtd_sent would understate CTR, since wt_clicks already excludes
+    # unreliable rows' implied clicks but _mtd_sent would still include
+    # their full volume.
+    _mtd_ctr_denom = float(_daily['ctr_denom_sent'].sum()) if 'ctr_denom_sent' in _daily.columns else _mtd_sent
+    _mtd_ctr   = (_mtd_wt_cl / _mtd_ctr_denom * 100)   if _mtd_ctr_denom else 0
     _mtd_conv  = float(_daily['conversions'].sum()) if not _daily.empty else 0
     # Use unique Campaign_Name to avoid inflating count with A/B test variations
     _mtd_camps = int(dod_raw['Campaign_Name'].nunique()) if 'Campaign_Name' in dod_raw.columns else (
@@ -4304,9 +4391,14 @@ elif page == '📅 Day-Over-Day (DOD)':
             _prior = _daily[_daily['sent_date'] < _d_date]
             if _prior.empty:
                 continue
+            # Same reliability-filtered denominator as _day_agg's own 'ctr'
+            # column (ctr_denom_sent, not the unfiltered 'sent') - otherwise
+            # this running average would be systematically lower than the
+            # per-day 'ctr' values it's being compared against.
+            _prior_denom_col = 'ctr_denom_sent' if 'ctr_denom_sent' in _prior.columns else 'sent'
             _run_avg = float(
-                (_prior['wt_clicks'].sum() / _prior['sent'].replace(0, float('nan')).sum() * 100)
-                if _prior['sent'].sum() > 0 else _prior['ctr'].mean()
+                (_prior['wt_clicks'].sum() / _prior[_prior_denom_col].replace(0, float('nan')).sum() * 100)
+                if _prior[_prior_denom_col].sum() > 0 else _prior['ctr'].mean()
             )
             if _run_avg > 0 and _d_ctr < _run_avg * 0.80:
                 _drop_pct = int((1 - _d_ctr / _run_avg) * 100)
