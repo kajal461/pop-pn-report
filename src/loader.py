@@ -654,3 +654,51 @@ def filter_flow_journey_campaigns(df: pd.DataFrame, delivery_map: dict) -> tuple
 
     keep = df[~(is_flow_type | is_journey_name)].copy()
     return keep, int(is_flow_type.sum()), int(is_journey_name.sum())
+
+
+def find_recurring_campaign_ids(dod_daily_df: pd.DataFrame, min_distinct_dates: int = 3) -> set:
+    """Identify Campaign_IDs that recur across multiple distinct send dates.
+
+    Caught 2026-08-18: user spotted literal "None" rows in the DOD Campaign
+    table for 2026-08-17. Investigation found 13 Campaign_IDs that send
+    EVERY DAY for weeks (e.g. one ID sent daily for 20 straight days,
+    2026-07-29 through 2026-08-17) - the unmistakable signature of a
+    recurring/automated push, not a one-time PN campaign. These evade
+    filter_flow_journey_campaigns() entirely because BOTH of its signals are
+    blank for them: Campaign_Delivery_Type is unpopulated and Campaign_Name
+    is unresolved (MoEngage's Search API returns nothing at all for these
+    IDs - not even a name). One of the 13 siblings DID resolve a name -
+    "PN_shop_nudge" - which confirms what the other 12 are: the same kind of
+    recurring nudge, just without resolvable metadata. All 13 are tagged
+    bu='Unknown' with zero real business-unit ownership.
+
+    Recurrence across dates needs neither signal: a genuine one-time
+    campaign sends once, so its Campaign_ID appears on exactly one sent_date
+    in dod_daily's day-by-day history. Threshold is 3, not 2, because two
+    confirmed-legitimate one-time campaigns ("Promo_dotd_2807_13",
+    "Promo_dotd_0508_21") each showed a small trailing tail (<2% of the main
+    send) spilling into the next calendar day - a send-time artifact, not
+    automation. All 13 confirmed-recurring IDs appear on 5-20 distinct dates
+    with consistent day-to-day volume, comfortably clear of that spillover
+    pattern.
+
+    One real limitation: a brand-new recurring campaign can't be detected
+    until it has actually recurred - there's an inherent ~2-day lag before
+    a new automation crosses this threshold. Accepted as a known trade-off;
+    the alternative (a lower threshold) would misclassify legitimate
+    midnight-spillover one-time campaigns.
+
+    Args:
+        dod_daily_df: DataFrame with Campaign_ID and sent_date columns
+                      (BigQuery-shaped, underscore column names).
+        min_distinct_dates: minimum distinct sent_date values to qualify
+                      as recurring. Default 3 (see rationale above).
+
+    Returns a set of Campaign_ID strings to exclude.
+    """
+    if 'Campaign_ID' not in dod_daily_df.columns or 'sent_date' not in dod_daily_df.columns:
+        return set()
+    df = dod_daily_df[['Campaign_ID', 'sent_date']].copy()
+    df['sent_date'] = pd.to_datetime(df['sent_date'], errors='coerce').dt.date
+    counts = df.groupby('Campaign_ID')['sent_date'].nunique()
+    return set(counts[counts >= min_distinct_dates].index)

@@ -39,6 +39,42 @@ def test_summary_bu_campaign_count():
     assert upi_mar.iloc[0]['campaign_count'] == 1
 
 
+def test_unreliable_impression_tracking_excluded_from_ctr_mean():
+    """Caught 2026-09-01 via a live sweep: summary_by_bu showed a 988.74%
+    max CTR - same root cause as the 540% Executive Overview spike fixed
+    minutes earlier in summary_overall.py (a campaign with near-zero
+    impressions despite a real sent count produces a mathematically
+    correct but meaningless CTR, and a plain per-(bu, period) mean has no
+    volume-weighting to dilute it). A BU-month with mostly normal
+    campaigns plus one broken-tracking outlier must report the normal
+    campaigns' CTR."""
+    master = pd.DataFrame([
+        {'bu': 'UPI', 'sent_month': '2026-03', 'sent_week': 11, 'Campaign ID': 'c1',
+         'All Platform Sent': 1400, 'All Platform Impressions': 1200,
+         'All Platform Clicks': 96, 'All Platform CTR': 8.0,
+         'primary_conversions': 10.0, 'end_to_end_funnel_rate': 0.001,
+         'reachability_rate': 0.9, 'All Platform FCM Delivery Rate': 85.0,
+         'is_ab_test': False},
+        {'bu': 'UPI', 'sent_month': '2026-03', 'sent_week': 11, 'Campaign ID': 'c2',
+         'All Platform Sent': 1300, 'All Platform Impressions': 1100,
+         'All Platform Clicks': 88, 'All Platform CTR': 8.0,
+         'primary_conversions': 10.0, 'end_to_end_funnel_rate': 0.001,
+         'reachability_rate': 0.9, 'All Platform FCM Delivery Rate': 85.0,
+         'is_ab_test': False},
+        {'bu': 'UPI', 'sent_month': '2026-03', 'sent_week': 11, 'Campaign ID': 'c3',
+         'All Platform Sent': 1384, 'All Platform Impressions': 1,   # broken: 0.07% impression rate
+         'All Platform Clicks': 30, 'All Platform CTR': 3000.0,
+         'primary_conversions': 10.0, 'end_to_end_funnel_rate': 0.001,
+         'reachability_rate': 0.9, 'All Platform FCM Delivery Rate': 85.0,
+         'is_ab_test': False},
+    ])
+    df = build_summary_bu(master)
+    monthly = df[(df['period_type'] == 'Monthly') & (df['bu'] == 'UPI') & (df['period_label'] == '2026-03')]
+    assert monthly.iloc[0]['All_Platform_CTR'] == 8.0
+    # Sent must still include the broken row's real raw volume.
+    assert monthly.iloc[0]['All_Platform_Sent'] == 1400 + 1300 + 1384
+
+
 def test_weekly_period_label_has_no_float_suffix_after_bigquery_roundtrip():
     """Caught 2026-08-17: every weekly period_label in the live table read
     'W34.0', 'W12.0', etc. sent_week has no native BigQuery integer type

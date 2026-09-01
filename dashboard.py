@@ -169,12 +169,27 @@ brand_impact = data['brand_impact']
 def compute_overall(master_df):
     """Recompute summary_overall from master for BU-filtered views."""
     master_df = master_df.copy()
-    for col in ['All_Platform_Sent', 'All_Platform_CTR',
+    for col in ['All_Platform_Sent', 'All_Platform_CTR', 'All_Platform_Impressions',
                 'primary_conversions', 'All_Platform_FCM_Delivery_Rate']:
         if col in master_df.columns:
             master_df[col] = pd.to_numeric(master_df[col], errors='coerce').fillna(0)
-    # Clip CTR outliers (5 data-quality rows with CTR > 100 in MoEngage export)
-    if 'All_Platform_CTR' in master_df.columns:
+    # Exclude campaigns with unreliable impression tracking from the CTR
+    # mean specifically (see MIN_IMPRESSION_RATE in config.py). Replaces a
+    # weaker clip(upper=100) that still let broken-tracking rows drag the
+    # mean toward 100% instead of removing them - caught 2026-09-01: this
+    # exact function feeds Executive Overview whenever a BU filter is
+    # applied, and is the same root cause as the 540% unfiltered spike
+    # fixed minutes earlier in summary_overall.py. A BU filter concentrates
+    # that BU's broken-tracking rows into a smaller sample (e.g. filtering
+    # to just UPI - Acquisition), making the distortion MORE likely to
+    # surface here than in the all-BU view.
+    if 'All_Platform_CTR' in master_df.columns and 'All_Platform_Impressions' in master_df.columns:
+        has_reliable_impressions = master_df['All_Platform_Impressions'] >= master_df['All_Platform_Sent'] * MIN_IMPRESSION_RATE
+        master_df.loc[~has_reliable_impressions, 'All_Platform_CTR'] = pd.NA
+    elif 'All_Platform_CTR' in master_df.columns:
+        # No impressions column available - fall back to the old clip as a
+        # last resort so this never crashes, but this path should not be hit
+        # in practice since All_Platform_Impressions is a standard column.
         master_df['All_Platform_CTR'] = master_df['All_Platform_CTR'].clip(upper=100)
 
     agg = master_df.groupby('sent_month').agg(
@@ -202,6 +217,14 @@ def compute_copy_analysis(master_df):
     master_df = master_df.copy()
     if 'All_Platform_CTR' in master_df.columns:
         master_df['All_Platform_CTR'] = pd.to_numeric(master_df['All_Platform_CTR'], errors='coerce').fillna(0)
+    # Same impression-reliability exclusion as compute_overall() above and
+    # copy_analysis_builder.py - a BU filter can concentrate broken-tracking
+    # rows into a small enough dimension bucket to distort avg_ctr here too.
+    if 'All_Platform_CTR' in master_df.columns and 'All_Platform_Impressions' in master_df.columns and 'All_Platform_Sent' in master_df.columns:
+        master_df['All_Platform_Sent'] = pd.to_numeric(master_df['All_Platform_Sent'], errors='coerce').fillna(0)
+        master_df['All_Platform_Impressions'] = pd.to_numeric(master_df['All_Platform_Impressions'], errors='coerce').fillna(0)
+        has_reliable_impressions = master_df['All_Platform_Impressions'] >= master_df['All_Platform_Sent'] * MIN_IMPRESSION_RATE
+        master_df.loc[~has_reliable_impressions, 'All_Platform_CTR'] = pd.NA
 
     DIMS = ['tonality', 'tonality_parent', 'emoji_count_bucket', 'title_length_bucket',
             'has_specific_number', 'has_action_verb', 'has_personalisation', 'has_fomo_signal',
@@ -238,10 +261,43 @@ def insights_overview(ov_df, master_df):
             arrow = "📈" if ctr_delta > 0 else "📉"
             insights.append(f"{arrow} CTR is **{direction} {abs(ctr_delta):.1f}%** vs last month.")
 
+    # Impression-reliability guard (see MIN_IMPRESSION_RATE in config.py) -
+    # applied once here, self-contained, since this function receives
+    # whatever master_df the caller passes rather than relying on a
+    # pre-masked column existing upstream. Caught 2026-09-01: this exact
+    # function generates the live "best performing BU" / "best performing
+    # tonality" lines in the Executive Overview insight box, and a plain
+    # per-group mean with no guard is exactly the bug already fixed
+    # elsewhere (e.g. RCBP showed 38.74% CTR for March vs the correct 3.84%).
+    _reliable_ctr_col = 'All_Platform_CTR'
+    if 'All_Platform_CTR' in master_df.columns and 'All_Platform_Impressions' in master_df.columns and 'All_Platform_Sent' in master_df.columns:
+        master_df = master_df.copy()
+        master_df['All_Platform_CTR'] = pd.to_numeric(master_df['All_Platform_CTR'], errors='coerce')
+        master_df['All_Platform_Sent'] = pd.to_numeric(master_df['All_Platform_Sent'], errors='coerce').fillna(0)
+        master_df['All_Platform_Impressions'] = pd.to_numeric(master_df['All_Platform_Impressions'], errors='coerce').fillna(0)
+        _has_reliable = master_df['All_Platform_Impressions'] >= master_df['All_Platform_Sent'] * MIN_IMPRESSION_RATE
+        master_df['_ctr_reliable'] = master_df['All_Platform_CTR'].where(_has_reliable)
+        _reliable_ctr_col = '_ctr_reliable'
+
+    # Minimum campaign count per group before a "best performing" pick is
+    # trustworthy enough to headline - same "< 10 is statistically
+    # meaningless" convention already used for MoM deltas elsewhere in this
+    # file. Caught 2026-09-01 immediately after fixing the impression-
+    # reliability bug above: with THAT bug fixed, the "best performing
+    # tonality" pick flipped to "DON'T: Corporate Jargon" backed by only 6
+    # campaigns, barely ahead (1.27% vs 1.25%) of a 74-campaign runner-up -
+    # correct math, but not a real signal, and exactly the kind of
+    # misleading headline a small sample produces once the bigger, more
+    # obviously wrong distortion is out of the way.
+    _camp_id_col = 'Campaign_ID' if 'Campaign_ID' in master_df.columns else 'Campaign ID'
+    _MIN_GROUP_CAMPAIGNS = 10
+
     if 'bu' in master_df.columns and 'All_Platform_CTR' in master_df.columns:
         master_df = master_df.copy()
         master_df['All_Platform_CTR'] = pd.to_numeric(master_df['All_Platform_CTR'], errors='coerce')
-        bu_ctrs = master_df.groupby('bu')['All_Platform_CTR'].mean()
+        bu_counts = master_df.groupby('bu')[_camp_id_col].nunique()
+        bu_ctrs = master_df.groupby('bu')[_reliable_ctr_col].mean()
+        bu_ctrs = bu_ctrs[bu_counts >= _MIN_GROUP_CAMPAIGNS]
         if not bu_ctrs.empty:
             top_bu = bu_ctrs.idxmax()
             top_ctr = bu_ctrs.max()
@@ -250,11 +306,13 @@ def insights_overview(ov_df, master_df):
     if 'tonality' in master_df.columns:
         master_df = master_df.copy()
         master_df['All_Platform_CTR'] = pd.to_numeric(master_df['All_Platform_CTR'], errors='coerce')
-        tone_ctrs = master_df.groupby('tonality')['All_Platform_CTR'].mean()
+        tone_counts = master_df.groupby('tonality')[_camp_id_col].nunique()
+        tone_ctrs = master_df.groupby('tonality')[_reliable_ctr_col].mean()
+        tone_ctrs = tone_ctrs[tone_counts >= _MIN_GROUP_CAMPAIGNS]
         if not tone_ctrs.empty:
             top_tone = tone_ctrs.idxmax()
             top_tone_ctr = tone_ctrs.max()
-            insights.append(f"✍️ Best performing tonality: **{top_tone}** at **{top_tone_ctr:.2f}% CTR**.")
+            insights.append(f"✍️ Best performing tonality: **{top_tone}** at **{top_tone_ctr:.2f}% CTR** ({int(tone_counts[top_tone])} campaigns).")
 
     return insights
 
@@ -593,6 +651,37 @@ if 'All_Platform_CTR' in filtered_master.columns:
     filtered_master['All_Platform_CTR'] = pd.to_numeric(filtered_master['All_Platform_CTR'], errors='coerce')
 if 'All_Platform_Sent' in filtered_master.columns:
     filtered_master['All_Platform_Sent'] = pd.to_numeric(filtered_master['All_Platform_Sent'], errors='coerce')
+
+# Precomputed once, used everywhere downstream: All_Platform_CTR with
+# unreliable-impression-tracking rows masked to NaN (see MIN_IMPRESSION_RATE
+# in config.py). All_Platform_CTR is MoEngage's own field, correctly
+# computed as Clicks/Impressions - a campaign with near-zero impressions
+# despite a real sent count produces a mathematically correct but
+# meaningless CTR (e.g. 3000%). A plain .mean()/groupby average has no
+# volume-weighting to dilute that.
+#
+# Caught 2026-09-01 via a systematic sweep after a data-recovery incident:
+# 25+ separate .mean() sites across Timing & Frequency, Segment
+# Intelligence, Channel Intelligence, Control Group Analysis, and BU
+# Performance all aggregated raw All_Platform_CTR with no guard - e.g.
+# filtering Executive Overview to just "UPI - Acquisition" showed a 15.01%
+# CTR for April 2026 (correct: 1.24%), and "RCBP" showed 38.74% for March
+# (correct: 3.84%). Rather than special-case each site, this one column is
+# computed here and substituted for 'All_Platform_CTR' at every AGGREGATE
+# site (groupby/mean) throughout the file. Deliberately NOT applied to
+# individual-row displays (e.g. a single campaign's own CTR in a table
+# cell) - a lone untrustworthy value isn't the same problem as it silently
+# corrupting an average that stakeholders read as "the" number for a BU
+# or time slot.
+if 'All_Platform_CTR' in filtered_master.columns and 'All_Platform_Impressions' in filtered_master.columns:
+    filtered_master['All_Platform_Impressions'] = pd.to_numeric(filtered_master['All_Platform_Impressions'], errors='coerce')
+    _has_reliable_impressions = (
+        filtered_master['All_Platform_Impressions'].fillna(0) >=
+        filtered_master['All_Platform_Sent'].fillna(0) * MIN_IMPRESSION_RATE
+    )
+    filtered_master['All_Platform_CTR_reliable'] = filtered_master['All_Platform_CTR'].where(_has_reliable_impressions)
+else:
+    filtered_master['All_Platform_CTR_reliable'] = filtered_master.get('All_Platform_CTR')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1113,11 +1202,26 @@ elif page == '🏢 BU Performance':
     if title_col in filtered_master.columns and 'bu' in filtered_master.columns and 'sent_month' in filtered_master.columns:
         latest_m = filtered_master['sent_month'].max()
         latest_m_df = filtered_master[filtered_master['sent_month'] == latest_m].copy()
-        latest_m_df['All_Platform_CTR']  = pd.to_numeric(latest_m_df['All_Platform_CTR'], errors='coerce')
-        latest_m_df['All_Platform_Sent'] = pd.to_numeric(latest_m_df['All_Platform_Sent'], errors='coerce')
+        latest_m_df['All_Platform_CTR']         = pd.to_numeric(latest_m_df['All_Platform_CTR'], errors='coerce')
+        latest_m_df['All_Platform_Sent']        = pd.to_numeric(latest_m_df['All_Platform_Sent'], errors='coerce')
+        latest_m_df['All_Platform_Impressions'] = pd.to_numeric(latest_m_df.get('All_Platform_Impressions', 0), errors='coerce').fillna(0)
 
-        # Apply minimum sent threshold — same as Top/Bottom ranking
-        latest_m_df = latest_m_df[latest_m_df['All_Platform_Sent'] >= MIN_SENT_THRESHOLD]
+        # Apply minimum sent threshold — same as Top/Bottom ranking - plus the
+        # same impression-reliability guard (see MIN_IMPRESSION_RATE in
+        # config.py): a raw sort_values on All_Platform_CTR is vulnerable to
+        # the same near-zero-impressions tracking-gap inflation caught
+        # 2026-08-17/18 elsewhere in this app.
+        latest_m_df = latest_m_df[
+            (latest_m_df['All_Platform_Sent'] >= MIN_SENT_THRESHOLD) &
+            (latest_m_df['All_Platform_Impressions'] >= latest_m_df['All_Platform_Sent'] * MIN_IMPRESSION_RATE)
+        ]
+
+        def _safe_get(row, col, default='—'):
+            """row.get(col, default) only falls back when the KEY is absent,
+            not when the stored value is None/NaN - caught 2026-08-18
+            rendering literal 'None' text in several places in this file."""
+            v = row.get(col)
+            return default if pd.isna(v) or str(v).strip() in ('', 'None', 'nan') else v
 
         if not latest_m_df.empty:
             top_by_bu = (
@@ -1126,12 +1230,12 @@ elif page == '🏢 BU Performance':
             )
             cols_cards = st.columns(min(3, len(top_by_bu)))
             for i, row in top_by_bu.iterrows():
-                bu_name = str(row.get('bu', ''))
+                bu_name = str(_safe_get(row, 'bu', 'Unknown'))
                 ctr_v = pd.to_numeric(row.get('All_Platform_CTR', 0), errors='coerce')
                 ctr_s = f'{ctr_v:.2f}%' if pd.notna(ctr_v) else '—'
-                title_s = str(row.get(title_col, '—'))[:80]
-                body_s  = str(row.get(body_col, '—'))[:100]
-                tone    = str(row.get('tonality', '—'))
+                title_s = str(_safe_get(row, title_col))[:80]
+                body_s  = str(_safe_get(row, body_col))[:100]
+                tone    = str(_safe_get(row, 'tonality'))
                 compliant = row.get('brand_compliant', False)
                 compliant_badge = '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700">✅ Brand Compliant</span>' if str(compliant).lower() == 'true' else '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700">❌ Non-Compliant</span>'
                 border_col = bu_colours.get(bu_name, '#64748b')
@@ -1891,17 +1995,34 @@ elif page == '🏆 Top & Bottom Campaigns':
     body_col  = 'Android_Message_Android_Web_Subtitle_iOS'
 
     # Compute top/bottom directly from filtered_master using BigQuery column names
-    # (avoids column-name mismatch when routing through build_top_bottom)
-    from config import MIN_SENT_THRESHOLD
+    # (avoids column-name mismatch when routing through build_top_bottom) - NOTE:
+    # this means this page does NOT get build_top_bottom()'s protections for
+    # free, they must be duplicated here. Caught 2026-08-18: this page was
+    # missing BOTH the blank-Campaign_Name exclusion and the
+    # MIN_IMPRESSION_RATE reliability guard that build_top_bottom() already
+    # has - live check found 331 rows with unreliable impression tracking
+    # eligible to leak in here (including real named campaigns showing a
+    # spurious 100.00% CTR from near-zero impressions, e.g. "UPI_2204_3",
+    # "UPI_2004_2") plus 2 rows that would render a literal "None" name.
+    from config import MIN_SENT_THRESHOLD, MIN_IMPRESSION_RATE
 
     fm = filtered_master.copy()
-    fm['All_Platform_CTR']  = pd.to_numeric(fm.get('All_Platform_CTR',  0), errors='coerce').fillna(0)
-    fm['All_Platform_Sent'] = pd.to_numeric(fm.get('All_Platform_Sent', 0), errors='coerce').fillna(0)
+    fm['All_Platform_CTR']         = pd.to_numeric(fm.get('All_Platform_CTR',  0), errors='coerce').fillna(0)
+    fm['All_Platform_Sent']        = pd.to_numeric(fm.get('All_Platform_Sent', 0), errors='coerce').fillna(0)
+    fm['All_Platform_Impressions'] = pd.to_numeric(fm.get('All_Platform_Impressions', 0), errors='coerce').fillna(0)
+
+    _tb_has_name = (
+        fm['Campaign_Name'].notna() & (fm['Campaign_Name'].astype(str).str.strip() != '')
+        if 'Campaign_Name' in fm.columns else pd.Series(True, index=fm.index)
+    )
+    _tb_has_reliable_impressions = fm['All_Platform_Impressions'] >= fm['All_Platform_Sent'] * MIN_IMPRESSION_RATE
 
     eligible = fm[
         (fm['All_Platform_Sent'] >= MIN_SENT_THRESHOLD) &
         (fm['All_Platform_CTR'] <= 100) &
-        (fm['All_Platform_CTR'] > 0)
+        (fm['All_Platform_CTR'] > 0) &
+        _tb_has_name &
+        _tb_has_reliable_impressions
     ].copy()
 
     # Aggregate to campaign level (weighted avg CTR) to avoid A/B variation inflation.
@@ -2457,24 +2578,24 @@ elif page == '⏰ Timing & Frequency':
     timing_insights = []
     best_slot = best_day = None
     if 'time_slot_bucket' in m.columns:
-        ts_agg = m.groupby('time_slot_bucket')['All_Platform_CTR'].mean().dropna()
+        ts_agg = m.groupby('time_slot_bucket')['All_Platform_CTR_reliable'].mean().dropna()
         if not ts_agg.empty:
             best_slot = ts_agg.idxmax()
             timing_insights.append(f"⏰ **{best_slot}** is the highest-CTR time slot ({ts_agg.max():.2f}%). Schedule priority campaigns here.")
     if 'sent_day_of_week' in m.columns:
-        dow_agg = m.groupby('sent_day_of_week')['All_Platform_CTR'].mean().dropna()
+        dow_agg = m.groupby('sent_day_of_week')['All_Platform_CTR_reliable'].mean().dropna()
         if not dow_agg.empty:
             best_day = dow_agg.idxmax()
             timing_insights.append(f"📅 **{best_day}** is the best day to send ({dow_agg.max():.2f}% avg CTR).")
     if 'is_weekend' in m.columns:
         m['_wknd'] = m['is_weekend'].apply(lambda x: 'Weekend' if (x is True or str(x).lower()=='true') else 'Weekday')
-        wknd = m.groupby('_wknd')['All_Platform_CTR'].mean()
+        wknd = m.groupby('_wknd')['All_Platform_CTR_reliable'].mean()
         if len(wknd)==2:
             diff = abs(wknd.get('Weekend',0) - wknd.get('Weekday',0))
             better = 'Weekends' if wknd.get('Weekend',0) > wknd.get('Weekday',0) else 'Weekdays'
             timing_insights.append(f"📊 **{better}** outperform by {diff:.2f}% CTR — adjust weekend cadence accordingly.")
     if 'day_of_month_bucket' in m.columns:
-        pay = m.groupby('day_of_month_bucket')['All_Platform_CTR'].mean().dropna()
+        pay = m.groupby('day_of_month_bucket')['All_Platform_CTR_reliable'].mean().dropna()
         if 'Payday Week' in pay.index and 'Rest of Month' in pay.index:
             pay_diff = pay['Payday Week'] - pay['Rest of Month']
             if abs(pay_diff) >= 0.05:
@@ -2496,7 +2617,7 @@ elif page == '⏰ Timing & Frequency':
         st.markdown('<div class="section-header">CTR by Time Slot</div>', unsafe_allow_html=True)
         st.caption('Dawn 4–7am · Morning 7–10am · Mid-day 10am–2pm · Evening 2–7pm · Night 7pm+')
         if 'time_slot_bucket' in m.columns:
-            ts = m.groupby('time_slot_bucket')['All_Platform_CTR'].mean().reset_index()
+            ts = m.groupby('time_slot_bucket')['All_Platform_CTR_reliable'].mean().reset_index()
             slot_order = ['Dawn', 'Morning', 'Mid-day', 'Evening', 'Night', 'Other']
             ts['time_slot_bucket'] = pd.Categorical(ts['time_slot_bucket'], categories=[s for s in slot_order if s in ts['time_slot_bucket'].values], ordered=True)
             ts = ts.sort_values('time_slot_bucket').dropna()
@@ -2520,7 +2641,7 @@ elif page == '⏰ Timing & Frequency':
         st.markdown('<div class="section-header">CTR by Day of Week</div>', unsafe_allow_html=True)
         st.caption('Which day drives the highest engagement?')
         if 'sent_day_of_week' in m.columns:
-            dow = m.groupby('sent_day_of_week')['All_Platform_CTR'].mean().reset_index()
+            dow = m.groupby('sent_day_of_week')['All_Platform_CTR_reliable'].mean().reset_index()
             day_order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
             dow['sent_day_of_week'] = pd.Categorical(dow['sent_day_of_week'], categories=[d for d in day_order if d in dow['sent_day_of_week'].values], ordered=True)
             dow = dow.sort_values('sent_day_of_week').dropna()
@@ -2544,7 +2665,7 @@ elif page == '⏰ Timing & Frequency':
     st.markdown('<div class="section-header">CTR Heatmap — Hour × Day of Week</div>', unsafe_allow_html=True)
     if 'sent_hour' in m.columns and 'sent_day_of_week' in m.columns:
         # Build CTR pivot AND campaign count pivot
-        heat_ctr   = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].mean().reset_index()
+        heat_ctr   = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR_reliable'].mean().reset_index()
         heat_count = m.groupby(['sent_day_of_week', 'sent_hour'])['All_Platform_CTR'].count().reset_index()
         heat_ctr['sent_hour']   = pd.to_numeric(heat_ctr['sent_hour'],   errors='coerce')
         heat_count['sent_hour'] = pd.to_numeric(heat_count['sent_hour'], errors='coerce')
@@ -2647,7 +2768,7 @@ elif page == '⏰ Timing & Frequency':
         st.markdown('<div class="section-header">Payday Week vs Rest of Month</div>', unsafe_allow_html=True)
         st.caption('Days 1–7 of the month (salary credit period) vs rest')
         if 'day_of_month_bucket' in m.columns:
-            pay = m.groupby('day_of_month_bucket')['All_Platform_CTR'].mean().reset_index()
+            pay = m.groupby('day_of_month_bucket')['All_Platform_CTR_reliable'].mean().reset_index()
             pay_ctrs = pay['All_Platform_CTR'].tolist()
             pay_mx = max(pay_ctrs) if pay_ctrs else 1
             pay_cols = ['#22c55e' if c==pay_mx else '#ef4444' for c in pay_ctrs]
@@ -2668,7 +2789,7 @@ elif page == '⏰ Timing & Frequency':
         st.caption('Do your Gen Z users engage more on weekends?')
         if 'is_weekend' in m.columns:
             m['_wknd_label'] = m['is_weekend'].apply(lambda x: 'Weekend' if (x is True or str(x).lower()=='true') else 'Weekday')
-            wknd = m.groupby('_wknd_label')['All_Platform_CTR'].mean().reset_index()
+            wknd = m.groupby('_wknd_label')['All_Platform_CTR_reliable'].mean().reset_index()
             wknd_ctrs = wknd['All_Platform_CTR'].tolist()
             wknd_mx = max(wknd_ctrs) if wknd_ctrs else 1
             wknd_cols = ['#22c55e' if c==wknd_mx else '#ef4444' for c in wknd_ctrs]
@@ -2691,7 +2812,7 @@ elif page == '⏰ Timing & Frequency':
     # Compute payday direction from the data for the action text
     payday_action_text = "Spread campaigns across the full month — payday week actually underperforms in your data"
     if 'day_of_month_bucket' in m.columns:
-        pay_check = m.groupby('day_of_month_bucket')['All_Platform_CTR'].mean()
+        pay_check = m.groupby('day_of_month_bucket')['All_Platform_CTR_reliable'].mean()
         if 'Payday Week' in pay_check.index and 'Rest of Month' in pay_check.index:
             if pay_check['Payday Week'] > pay_check['Rest of Month']:
                 payday_action_text = "Align high-value campaigns with salary credit dates (1st–7th) — payday week outperforms"
@@ -2872,7 +2993,7 @@ elif page == '📦 Segment Intelligence':
 
     type_perf = seg_m.groupby('seg_type').agg(
         campaigns=(camp_col_s,'nunique'),
-        avg_ctr=('All_Platform_CTR','mean'),
+        avg_ctr=('All_Platform_CTR_reliable','mean'),
         total_sent=('All_Platform_Sent','sum'),
         total_conversions=('primary_conversions','sum'),
         avg_reachability=('reachability_rate','mean'),
@@ -2904,7 +3025,7 @@ elif page == '📦 Segment Intelligence':
         with col_t2:
             best_type = type_perf.iloc[0]
             broadcast_ctr = type_perf[type_perf['seg_type']=='Broadcast']['avg_ctr'].values
-            broadcast_ctr = broadcast_ctr[0] if len(broadcast_ctr)>0 else seg_m[seg_m['seg_type']=='Broadcast']['All_Platform_CTR'].mean()
+            broadcast_ctr = broadcast_ctr[0] if len(broadcast_ctr)>0 else seg_m[seg_m['seg_type']=='Broadcast']['All_Platform_CTR_reliable'].mean()
             lift = best_type['avg_ctr'] - (broadcast_ctr if pd.notna(broadcast_ctr) else 0)
             st.markdown(f"""
             <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:16px;border-top:4px solid #22c55e">
@@ -2922,7 +3043,7 @@ elif page == '📦 Segment Intelligence':
 
     lifecycle_perf = seg_m.groupby('lifecycle').agg(
         campaigns=(camp_col_s,'nunique'),
-        avg_ctr=('All_Platform_CTR','mean'),
+        avg_ctr=('All_Platform_CTR_reliable','mean'),
         total_sent=('All_Platform_Sent','sum'),
         total_conversions=('primary_conversions','sum'),
     ).reset_index()
@@ -2969,7 +3090,7 @@ elif page == '📦 Segment Intelligence':
 
     seg_perf = seg_m[seg_m['seg_type']=='Custom Segment'].groupby('seg_clean').agg(
         campaigns=(camp_col_s,'nunique'),
-        avg_ctr=('All_Platform_CTR','mean'),
+        avg_ctr=('All_Platform_CTR_reliable','mean'),
         total_sent=('All_Platform_Sent','sum'),
         total_conversions=('primary_conversions','sum'),
         avg_reach=('reachability_rate','mean'),
@@ -3017,7 +3138,7 @@ elif page == '📦 Segment Intelligence':
     st.caption('Green = high CTR for that BU × Segment combination. Empty = not tested.')
 
     seg_bu = seg_m[seg_m['seg_type']=='Custom Segment'].groupby(['seg_clean','bu']).agg(
-        avg_ctr=('All_Platform_CTR','mean'),
+        avg_ctr=('All_Platform_CTR_reliable','mean'),
         campaigns=(camp_col_s,'nunique'),
     ).reset_index()
     seg_bu['avg_ctr'] = seg_bu['avg_ctr'].clip(upper=100)
@@ -3263,7 +3384,7 @@ elif page == '📡 Channel Intelligence':
     if 'primary_conversions' in m.columns and camp_col_ci in m.columns:
         camp_convs = m.groupby(camp_col_ci).agg(
             conversions=('primary_conversions','sum'),
-            ctr=('All_Platform_CTR','mean'),
+            ctr=('All_Platform_CTR_reliable','mean'),
             sent=('All_Platform_Sent','sum'),
             bu=('bu','first'),
         ).reset_index().sort_values('conversions', ascending=False)
@@ -3343,7 +3464,7 @@ elif page == '📡 Channel Intelligence':
             '1 PN/day' if x<=1 else ('2 PNs/day' if x==2 else ('3 PNs/day' if x==3 else '4+ PNs/day')))
 
         fatigue = m.groupby('_freq_bucket').agg(
-            avg_ctr=('All_Platform_CTR','mean'),
+            avg_ctr=('All_Platform_CTR_reliable','mean'),
             campaigns=(camp_col_ci,'nunique') if camp_col_ci in m.columns else ('All_Platform_CTR','count'),
         ).reset_index()
         freq_order = ['1 PN/day','2 PNs/day','3 PNs/day','4+ PNs/day']
@@ -3589,8 +3710,8 @@ elif page == '🧪 Control Group Analysis':
             with_cg=('has_cg','sum'),
             adequate=('cg_adequate','sum'),
             avg_cg_size=('cg_size','mean'),
-            ctr_with_cg=('All_Platform_CTR', lambda x: x[m.loc[x.index,'has_cg']].mean()),
-            ctr_no_cg=('All_Platform_CTR', lambda x: x[~m.loc[x.index,'has_cg']].mean()),
+            ctr_with_cg=('All_Platform_CTR_reliable', lambda x: x[m.loc[x.index,'has_cg']].mean()),
+            ctr_no_cg=('All_Platform_CTR_reliable', lambda x: x[~m.loc[x.index,'has_cg']].mean()),
         ).reset_index()
         bu_cg['coverage_pct'] = bu_cg['with_cg'] / bu_cg['total'] * 100
         bu_cg['adequate_pct'] = bu_cg.apply(lambda r: r['adequate']/r['with_cg']*100 if r['with_cg']>0 else 0, axis=1)
@@ -3669,7 +3790,8 @@ elif page == '🧪 Control Group Analysis':
 
     if 'has_cg' in m.columns and 'All_Platform_CTR' in m.columns and 'bu' in m.columns:
         m['cg_label'] = m['has_cg'].apply(lambda x: '🔬 With Control Group' if x else '📤 No Control Group')
-        tested = m.groupby(['bu','cg_label'])['All_Platform_CTR'].mean().reset_index()
+        tested = m.groupby(['bu','cg_label'])['All_Platform_CTR_reliable'].mean().reset_index().rename(
+            columns={'All_Platform_CTR_reliable': 'All_Platform_CTR'})
 
         fig_tv = go.Figure()
         for label, colour in [('🔬 With Control Group','#4F46E5'),('📤 No Control Group','#94a3b8')]:
@@ -3712,8 +3834,24 @@ elif page == '🧪 Control Group Analysis':
         # Compute highlights before table
         _avg_cg_pct   = cg_campaigns['cg_pct'].mean()
         _total_cg_u   = int(cg_campaigns['cg_size'].sum())
-        _best_ctr_row = cg_campaigns.loc[cg_campaigns['All_Platform_CTR'].idxmax()]
-        _best_ctr_nm  = str(_best_ctr_row.get('Campaign_Name',''))[:40]
+        # Same impression-reliability guard as Copy Intelligence / Top &
+        # Bottom / A/B Testing / DOD (see MIN_IMPRESSION_RATE in config.py) -
+        # a raw idxmax() on All_Platform_CTR is vulnerable to the same
+        # near-zero-impressions tracking-gap inflation caught 2026-08-17.
+        if 'All_Platform_Impressions' in cg_campaigns.columns:
+            _cg_impr    = pd.to_numeric(cg_campaigns['All_Platform_Impressions'], errors='coerce').fillna(0)
+            _cg_sent_n  = pd.to_numeric(cg_campaigns['All_Platform_Sent'], errors='coerce').fillna(0)
+            _cg_reliable = cg_campaigns[_cg_impr >= _cg_sent_n * MIN_IMPRESSION_RATE]
+        else:
+            _cg_reliable = pd.DataFrame()
+        _cg_best_pool = _cg_reliable if not _cg_reliable.empty else cg_campaigns
+        _best_ctr_row = _cg_best_pool.loc[_cg_best_pool['All_Platform_CTR'].idxmax()]
+        _best_ctr_nm_raw = _best_ctr_row.get('Campaign_Name')
+        _best_ctr_nm = (
+            'Unknown Campaign'
+            if pd.isna(_best_ctr_nm_raw) or str(_best_ctr_nm_raw).strip() in ('', 'None', 'nan')
+            else str(_best_ctr_nm_raw)[:40]
+        )
         _cg_conv_tot  = cg_campaigns['primary_conversions'].sum() if 'primary_conversions' in cg_campaigns.columns else 0
         _no_cg_conv   = no_cg['primary_conversions'].sum() if 'primary_conversions' in no_cg.columns else 0
         _cg_avg_ctr   = (cg_campaigns['All_Platform_Sent'] * cg_campaigns['All_Platform_CTR']).sum() / cg_campaigns['All_Platform_Sent'].sum() if cg_campaigns['All_Platform_Sent'].sum() > 0 else 0
@@ -4126,8 +4264,29 @@ elif page == '📅 Day-Over-Day (DOD)':
 
         # Top campaign yesterday
         if not _yd_data.empty and 'All_Platform_CTR' in _yd_data.columns:
-            _top_camp = _yd_data.sort_values('All_Platform_CTR', ascending=False).iloc[0]
-            _camp_nm  = str(_top_camp.get('Campaign_Name', _top_camp.get('Campaign_ID', '—')))[:45]
+            # Same impression-reliability guard as Copy Intelligence / Top &
+            # Bottom / A/B Testing (see MIN_IMPRESSION_RATE in config.py) -
+            # All_Platform_CTR is Clicks/Impressions, so a campaign with
+            # near-zero impressions can show a spuriously huge CTR from the
+            # tracking gap alone. Falls back to the full day's pool only if
+            # NOTHING that day has reliable tracking.
+            _yd_pick = _yd_data.copy()
+            _yd_pick['All_Platform_Sent']        = pd.to_numeric(_yd_pick.get('All_Platform_Sent', 0), errors='coerce').fillna(0)
+            _yd_pick['All_Platform_Impressions']  = pd.to_numeric(_yd_pick.get('All_Platform_Impressions', 0), errors='coerce').fillna(0)
+            _yd_reliable = _yd_pick[_yd_pick['All_Platform_Impressions'] >= _yd_pick['All_Platform_Sent'] * MIN_IMPRESSION_RATE]
+            _yd_pool  = _yd_reliable if not _yd_reliable.empty else _yd_pick
+            _top_camp = _yd_pool.sort_values('All_Platform_CTR', ascending=False).iloc[0]
+            # .get() only falls back when the KEY is absent, not when the
+            # stored value is None - a handful of genuinely one-time
+            # campaigns MoEngage can't resolve a name for have a real
+            # Campaign_Name column that's just empty for that row, which
+            # rendered as the literal text "None" here (caught 2026-08-18).
+            _camp_nm_raw = _top_camp.get('Campaign_Name')
+            _camp_nm = (
+                'Unknown Campaign'
+                if pd.isna(_camp_nm_raw) or str(_camp_nm_raw).strip() in ('', 'None', 'nan')
+                else str(_camp_nm_raw)[:45]
+            )
             _top_ctr  = float(_top_camp['All_Platform_CTR'])
             if _yd_ctr > 0:
                 _mult = _top_ctr / _yd_ctr
@@ -4325,7 +4484,18 @@ elif page == '📅 Day-Over-Day (DOD)':
         if 'is_ab_test' in _tbl.columns:
             _tbl['is_ab_test'] = _tbl['is_ab_test'].apply(lambda x: '🧪' if str(x).lower() in ('true','1') else '')
         if 'Campaign_Name' in _tbl.columns:
+            # A handful of genuinely one-time campaigns (real sends, just
+            # never got a resolvable name from MoEngage's Search API) show
+            # up with a null Campaign_Name. Blind .astype(str) turned that
+            # null into the literal text "None", which reads as a real
+            # value instead of a missing one (caught 2026-08-17 in the live
+            # table). Recurring/automated campaigns with the same symptom
+            # are excluded upstream now (see find_recurring_campaign_ids in
+            # src/loader.py) - this only affects the rare true one-time
+            # campaign MoEngage can't identify.
+            _blank_name = _tbl['Campaign_Name'].isna() | (_tbl['Campaign_Name'].astype(str).str.strip().isin(['', 'None', 'nan']))
             _tbl['Campaign_Name'] = _tbl['Campaign_Name'].astype(str).str[:55]
+            _tbl.loc[_blank_name, 'Campaign_Name'] = 'Unknown Campaign'
         _tbl = _tbl.rename(columns={
             'Campaign_Name':'Campaign','bu':'BU',
             'All_Platform_Sent':'Sent','All_Platform_CTR':'CTR',

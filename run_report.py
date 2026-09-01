@@ -205,6 +205,21 @@ def main() -> None:
         raw_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(raw_df, _delivery_map)
         print(f'   -> Excluded {_before - len(raw_df)} Flow/Journey campaigns '
               f'({_n_by_type} by type, {_n_by_name} by name), keeping {len(raw_df)}')
+    else:
+        # CSV/Sheets exports carry a real 'Campaign Delivery Type' column
+        # directly - no API lookup needed to build the map. Caught
+        # 2026-09-01 during the master_enriched history recovery: this
+        # branch never applied the Flow/Journey exclusion at all, so a
+        # straight CSV re-import would have silently reintroduced the exact
+        # contamination fixed for the API path on 2026-08-17.
+        from src.loader import filter_flow_journey_campaigns
+        from config import COL_CAMPAIGN_ID, COL_DELIVERY_TYPE
+        if COL_CAMPAIGN_ID in raw_df.columns and COL_DELIVERY_TYPE in raw_df.columns:
+            _delivery_map = dict(zip(raw_df[COL_CAMPAIGN_ID], raw_df[COL_DELIVERY_TYPE]))
+            _before = len(raw_df)
+            raw_df, _n_by_type, _n_by_name = filter_flow_journey_campaigns(raw_df, _delivery_map)
+            print(f'   -> Excluded {_before - len(raw_df)} Flow/Journey campaigns '
+                  f'({_n_by_type} by type, {_n_by_name} by name), keeping {len(raw_df)}')
 
     print('Building master enriched table...')
     master = build_master(raw_df, lookup_df)

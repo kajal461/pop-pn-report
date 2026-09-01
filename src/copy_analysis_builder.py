@@ -1,6 +1,6 @@
 # src/copy_analysis_builder.py
 import pandas as pd
-from config import COL_ALL_CTR, COL_ALL_SENT
+from config import COL_ALL_CTR, COL_ALL_SENT, COL_ALL_IMPRESSIONS, MIN_IMPRESSION_RATE
 
 COPY_DIMENSIONS = [
     'tonality', 'tonality_parent', 'tonality_subtype',
@@ -22,6 +22,19 @@ def build_copy_analysis(master: pd.DataFrame) -> pd.DataFrame:
     if 'primary_conversions' not in master.columns:
         master['primary_conversions'] = 0.0
     master['primary_conversions'] = pd.to_numeric(master['primary_conversions'], errors='coerce').fillna(0)
+
+    # Exclude campaigns with unreliable impression tracking from the CTR
+    # mean specifically (see MIN_IMPRESSION_RATE in config.py, and the
+    # identical fix in summary_overall.py / summary_bu.py). Not currently
+    # visibly broken here - these dimension buckets are large enough
+    # (hundreds to thousands of campaigns) to dilute the handful of
+    # near-zero-impression outliers - but applied proactively for the same
+    # reason it's applied everywhere else in this codebase: a future
+    # dimension bucket with fewer campaigns (a rare tonality, a new era)
+    # would be just as exposed as summary_overall's 9-campaign March was.
+    if COL_ALL_IMPRESSIONS in master.columns:
+        has_reliable_impressions = pd.to_numeric(master[COL_ALL_IMPRESSIONS], errors='coerce').fillna(0) >= master[COL_ALL_SENT] * MIN_IMPRESSION_RATE
+        master.loc[~has_reliable_impressions, COL_ALL_CTR] = pd.NA
 
     frames = []
     for dim in COPY_DIMENSIONS:

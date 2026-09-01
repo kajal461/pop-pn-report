@@ -29,7 +29,12 @@ def test_bu_tags_assigned_correctly():
     master = _master()
     assert 'bu' in master.columns
     assert set(master['bu'].unique()).issubset(
-        {'UPI', 'POPcard', 'Rupay', 'Shop', 'RCBP', 'POPchop', 'Unknown'}
+        {
+            'UPI - Acquisition', 'UPI - Retention', 'RCBP', 'Shop', 'POPchop',
+            'POPcard - Acquisition', 'POPcard - Activation',
+            'Rupay - Activation', 'Rupay - Acquisition',
+            'Unknown',
+        }
     )
 
 

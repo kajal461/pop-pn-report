@@ -6,7 +6,7 @@ from config import COL_ALL_SENT, COL_CAMPAIGN_ID, COL_TAG_UNCATEGORIZED
 from src.loader import (
     load_from_csv, load_lookup_from_csv, load_from_sheets,
     enrich_campaign_metadata, load_from_moengage_api, fetch_campaign_metadata,
-    filter_flow_journey_campaigns,
+    filter_flow_journey_campaigns, find_recurring_campaign_ids,
 )
 
 
@@ -592,3 +592,63 @@ def test_empty_delivery_map_does_not_crash():
     kept, n_type, n_name = filter_flow_journey_campaigns(_flow_test_df(), {})
     assert n_type == 0
     assert 'c2' not in kept['Campaign ID'].values  # name pattern still catches D13 PN
+
+
+def _dod_rows(campaign_id, dates, sent=1000):
+    return [{'Campaign_ID': campaign_id, 'sent_date': d, 'All_Platform_Sent': sent} for d in dates]
+
+
+def test_finds_campaign_recurring_on_3_plus_distinct_dates():
+    """Caught 2026-08-18: a Campaign_ID sending daily for 20 straight days
+    with no resolvable name or delivery_type - neither signal
+    filter_flow_journey_campaigns() relies on was populated, so it slipped
+    through. Recurrence across dates is a third, independent signal."""
+    df = pd.DataFrame(_dod_rows('recurring1', [
+        '2026-07-29', '2026-07-30', '2026-07-31', '2026-08-01',
+    ]))
+    ids = find_recurring_campaign_ids(df)
+    assert 'recurring1' in ids
+
+
+def test_one_time_campaign_on_single_date_not_flagged():
+    df = pd.DataFrame(_dod_rows('onetime1', ['2026-08-17']))
+    ids = find_recurring_campaign_ids(df)
+    assert 'onetime1' not in ids
+
+
+def test_midnight_spillover_two_dates_not_flagged():
+    """Confirmed live: 'Promo_dotd_2807_13' sent 221,608 on 2026-07-28 and
+    a trailing 605 (0.27%) on 2026-07-29 - a send-time spillover artifact,
+    not automation. Threshold is 3 dates specifically so this legitimate
+    one-time campaign isn't misclassified as recurring."""
+    df = pd.DataFrame(
+        _dod_rows('spillover1', ['2026-07-28'], sent=221608) +
+        _dod_rows('spillover1', ['2026-07-29'], sent=605)
+    )
+    ids = find_recurring_campaign_ids(df)
+    assert 'spillover1' not in ids
+
+
+def test_campaign_on_exactly_3_dates_is_flagged():
+    df = pd.DataFrame(_dod_rows('threedate1', ['2026-08-01', '2026-08-02', '2026-08-03']))
+    ids = find_recurring_campaign_ids(df)
+    assert 'threedate1' in ids
+
+
+def test_ab_variation_same_date_does_not_count_as_recurring():
+    """Two A/B variation rows sharing the same Campaign_ID and sent_date
+    must not look like recurrence - only DISTINCT dates count."""
+    df = pd.DataFrame([
+        {'Campaign_ID': 'ab1', 'sent_date': '2026-08-17', 'All_Platform_Sent': 500},
+        {'Campaign_ID': 'ab1', 'sent_date': '2026-08-17', 'All_Platform_Sent': 500},
+    ])
+    ids = find_recurring_campaign_ids(df)
+    assert 'ab1' not in ids
+
+
+def test_missing_columns_returns_empty_set_without_crashing():
+    assert find_recurring_campaign_ids(pd.DataFrame({'foo': [1, 2]})) == set()
+
+
+def test_empty_dataframe_returns_empty_set():
+    assert find_recurring_campaign_ids(pd.DataFrame({'Campaign_ID': [], 'sent_date': []})) == set()

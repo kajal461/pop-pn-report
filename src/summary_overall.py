@@ -1,6 +1,9 @@
 # src/summary_overall.py
 import pandas as pd
-from config import COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, COL_ALL_CTR, COL_ALL_FCM_RATE
+from config import (
+    COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, COL_ALL_CTR,
+    COL_ALL_FCM_RATE, MIN_IMPRESSION_RATE,
+)
 
 METRIC_COLS = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
                COL_ALL_CTR, 'primary_conversions', 'click_to_convert_rate',
@@ -31,6 +34,21 @@ def build_summary_overall(master: pd.DataFrame) -> pd.DataFrame:
     for col in METRIC_COLS:
         if col in master.columns:
             master[col] = pd.to_numeric(master[col], errors='coerce').fillna(0)
+
+    # Exclude campaigns with unreliable impression tracking from the CTR
+    # mean specifically (see MIN_IMPRESSION_RATE in config.py). All_Platform_CTR
+    # is MoEngage's own field, correctly computed as Clicks/Impressions - a
+    # campaign with e.g. 1,384 sent but only 1 impression recorded can show a
+    # mathematically correct but meaningless 3000% CTR. A plain per-row mean
+    # (this function's aggregation) has no volume-weighting to dilute that,
+    # so a handful of these in a low-volume month can spike the whole
+    # month's "avg CTR" into the hundreds of percent (caught 2026-09-01: a
+    # 540% peak on the Executive Overview trend chart traced to exactly this).
+    # Sent/Impressions/Clicks sums are untouched - those raw counts are real
+    # regardless of whether the CTR ratio built from them is trustworthy.
+    if COL_ALL_CTR in master.columns and COL_ALL_SENT in master.columns and COL_ALL_IMPRESSIONS in master.columns:
+        has_reliable_impressions = master[COL_ALL_IMPRESSIONS] >= master[COL_ALL_SENT] * MIN_IMPRESSION_RATE
+        master.loc[~has_reliable_impressions, COL_ALL_CTR] = pd.NA
 
     agg_dict = {
         col: (col, 'sum' if col in SUM_COLS else 'mean')

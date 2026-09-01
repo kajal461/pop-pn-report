@@ -1,10 +1,26 @@
 # src/brand_impact_builder.py
 import pandas as pd
-from config import COL_ALL_CTR, COL_ALL_SENT
+from config import COL_ALL_CTR, COL_ALL_SENT, COL_ALL_IMPRESSIONS, MIN_IMPRESSION_RATE
 
 
 def _weighted_avg_ctr(group: pd.DataFrame, ctr_col: str, sent_col: str) -> float:
-    """Compute send-weighted average CTR. More accurate than simple mean."""
+    """Compute send-weighted average CTR. More accurate than simple mean -
+    but sent-weighting alone does NOT protect against unreliable impression
+    tracking (see MIN_IMPRESSION_RATE in config.py). A campaign with e.g.
+    1,384 sent but only 1 impression still has a normal-sized Sent weight,
+    multiplied by its mathematically correct but meaningless CTR (Clicks/
+    Impressions can read 3000%+) - the large weight makes the distortion
+    worse, not better. Caught 2026-09-01 via a live sweep: a 9-campaign
+    March bucket showed 37.39% avg CTR vs ~1-2% everywhere else. Restrict
+    to reliable-impression rows first; fall back to the full group only if
+    none in it are reliable (same pattern as ab_detector.py's winner pick).
+    """
+    impr_col = 'All_Platform_Impressions' if 'All_Platform_Impressions' in group.columns else COL_ALL_IMPRESSIONS
+    if impr_col in group.columns:
+        has_reliable_impressions = pd.to_numeric(group[impr_col], errors='coerce').fillna(0) >= group[sent_col] * MIN_IMPRESSION_RATE
+        reliable = group[has_reliable_impressions]
+        group = reliable if not reliable.empty else group
+
     total_sent = group[sent_col].sum()
     if total_sent == 0:
         return 0.0

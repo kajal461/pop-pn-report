@@ -1,6 +1,9 @@
 # src/summary_bu.py
 import pandas as pd
-from config import COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, COL_ALL_CTR, COL_ALL_FCM_RATE
+from config import (
+    COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS, COL_ALL_CTR,
+    COL_ALL_FCM_RATE, MIN_IMPRESSION_RATE,
+)
 
 METRIC_COLS = [COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CLICKS,
                COL_ALL_CTR, 'primary_conversions', 'end_to_end_funnel_rate',
@@ -63,6 +66,20 @@ def build_summary_bu(master: pd.DataFrame) -> pd.DataFrame:
     for col in METRIC_COLS:
         if col in master.columns:
             master[col] = pd.to_numeric(master[col], errors='coerce').fillna(0)
+
+    # Exclude campaigns with unreliable impression tracking from the CTR
+    # mean specifically (see MIN_IMPRESSION_RATE in config.py, and the
+    # identical fix in summary_overall.py). All_Platform_CTR is MoEngage's
+    # own field, correctly computed as Clicks/Impressions - a campaign with
+    # e.g. 1,384 sent but only 1 impression recorded can show a
+    # mathematically correct but meaningless 3000% CTR. This builder's
+    # plain per-(bu, period) mean has no volume-weighting to dilute that -
+    # caught 2026-09-01 via a live sweep: summary_by_bu showed a 988.74%
+    # max CTR, same root cause as the 540% Executive Overview spike fixed
+    # moments earlier. Sent/Impressions/Clicks sums are untouched.
+    if COL_ALL_CTR in master.columns and COL_ALL_SENT in master.columns and COL_ALL_IMPRESSIONS in master.columns:
+        has_reliable_impressions = master[COL_ALL_IMPRESSIONS] >= master[COL_ALL_SENT] * MIN_IMPRESSION_RATE
+        master.loc[~has_reliable_impressions, COL_ALL_CTR] = pd.NA
 
     # Monthly — MOM deltas
     monthly = _aggregate(master, 'sent_month')

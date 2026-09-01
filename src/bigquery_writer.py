@@ -103,13 +103,35 @@ def _write_table(
     table_name: str,
     df: pd.DataFrame,
 ) -> None:
-    """Write a single DataFrame to a BigQuery table, replacing previous data."""
+    """Write a single DataFrame to a BigQuery table, replacing previous data.
+
+    Explicitly drops the table before recreating it - NOT just cosmetic.
+    This project's BigQuery dataset has no billing enabled, so GCP forces a
+    hard 60-day table expiration that cannot be raised or removed (confirmed
+    2026-09-01: PATCH to clear it fails with 403 "Billing has not been
+    enabled... default table expiration time must be less than 60 days").
+    That expiration clock is set from the table's CREATION time - a plain
+    WRITE_TRUNCATE load job replaces the DATA but keeps the existing table
+    object (and its original creation timestamp) intact, so the countdown
+    never resets no matter how often the table is refreshed. This is exactly
+    what silently deleted master_enriched on ~2026-08-28 (~60 days after it
+    was first created around late June), wiping ~6,200 rows of history back
+    to March 2026 - data MoEngage's 90-day API export window can no longer
+    re-supply. Explicitly deleting the table first forces BigQuery to create
+    a genuinely new table object on the next load, which resets creation
+    time and buys another full 60 days - confirmed live: the table that
+    self-healed after the incident shows created=2026-08-31, expires
+    2026-10-30 (60 days from ITS creation), proving delete+recreate is the
+    only way to move that clock without enabling billing.
+    """
     if df is None or df.empty:
         print(f'  x {table_name}: empty, skipped')
         return
 
     df_clean = _clean_df(df)
     table_ref = f'{project_id}.{BQ_DATASET}.{table_name}'
+
+    client.delete_table(table_ref, not_found_ok=True)
 
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,  # replace each run
@@ -118,7 +140,7 @@ def _write_table(
 
     job = client.load_table_from_dataframe(df_clean, table_ref, job_config=job_config)
     job.result()  # block until complete
-    print(f'  -> {table_name}: {len(df_clean)} rows written -> {table_ref}')
+    print(f'  -> {table_name}: {len(df_clean)} rows written -> {table_ref} (recreated fresh - resets 60-day expiration clock)')
 
 
 def upsert_master_enriched(
@@ -201,6 +223,37 @@ def upsert_master_enriched(
         combined = combined.drop_duplicates(keep='first')
         print(f'  Combined: {len(combined):,} rows (no primary key — deduped by all columns)')
 
+    # Cross-reference dod_daily's day-level history to catch recurring/
+    # automated campaigns. master_enriched dedupes to one row per
+    # Campaign_ID, so it has no way to see recurrence on its own - the
+    # day-by-day evidence only exists in dod_daily. See
+    # find_recurring_campaign_ids in src/loader.py for the full
+    # investigation (2026-08-18: 13 IDs sending daily for weeks, tagged
+    # bu='Unknown', slipping past filter_flow_journey_campaigns because
+    # neither of its signals is populated for them).
+    try:
+        _dod_hist = client.query(
+            f'SELECT Campaign_ID, sent_date FROM `{project_id}.{BQ_DATASET}.dod_daily`'
+        ).to_dataframe()
+        from src.loader import find_recurring_campaign_ids
+        _recurring_ids = find_recurring_campaign_ids(_dod_hist)
+    except Exception as e:
+        if 'Not found' in str(e) or 'notFound' in str(e).lower():
+            _recurring_ids = set()  # dod_daily doesn't exist yet - nothing to cross-reference
+        else:
+            print(f'  WARNING: Could not cross-reference dod_daily for recurring campaigns: {e}')
+            _recurring_ids = set()
+
+    if _recurring_ids:
+        _id_col = 'Campaign_ID' if 'Campaign_ID' in combined.columns else (
+                  'Campaign ID' if 'Campaign ID' in combined.columns else None)
+        if _id_col:
+            _n_before = len(combined)
+            combined = combined[~combined[_id_col].isin(_recurring_ids)].copy()
+            _n_removed = _n_before - len(combined)
+            if _n_removed:
+                print(f'  Excluded {_n_removed:,} rows from {len(_recurring_ids)} recurring/automated campaign IDs (cross-referenced from dod_daily)')
+
     # Write full combined dataset back to BigQuery
     _write_table(client, project_id, 'master_enriched', combined)
     if 'sent_month' in combined.columns:
@@ -272,6 +325,23 @@ def upsert_dod_daily(
         if not existing_clean.empty
         else new_clean.copy()
     )
+
+    # Exclude recurring/automated campaigns - a genuine one-time PN campaign
+    # sends once, so its Campaign_ID should appear on exactly one sent_date.
+    # Anything recurring across 3+ distinct dates is automation, not
+    # one-time (see find_recurring_campaign_ids docstring in src/loader.py
+    # for the full 2026-08-18 investigation). Computed over the full
+    # combined history so this self-corrects on every daily run - both
+    # retroactively cleaning up existing contamination and catching newly
+    # recurring IDs as soon as they cross the threshold.
+    from src.loader import find_recurring_campaign_ids
+    _recurring_ids = find_recurring_campaign_ids(combined)
+    if _recurring_ids and 'Campaign_ID' in combined.columns:
+        _n_before = len(combined)
+        combined = combined[~combined['Campaign_ID'].isin(_recurring_ids)].copy()
+        _n_removed = _n_before - len(combined)
+        if _n_removed:
+            print(f'  Excluded {_n_removed:,} rows from {len(_recurring_ids)} recurring/automated campaign IDs (not one-time PN)')
 
     _write_table(client, project_id, 'dod_daily', combined)
     print(f'  dod_daily: {len(new_clean):,} rows added for {sent_date} ({len(combined):,} total rows)')
