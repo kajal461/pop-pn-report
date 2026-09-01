@@ -2,14 +2,14 @@
 import pandas as pd
 from config import (
     COL_CAMPAIGN_ID, COL_CAMPAIGN_NAME, COL_VARIATION,
-    COL_ALL_CTR, COL_ALL_SENT, COL_ANDROID_TITLE, COL_ANDROID_BODY,
+    COL_ALL_CTR, COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ANDROID_TITLE, COL_ANDROID_BODY,
 )
 
 
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     known = {COL_CAMPAIGN_ID, COL_CAMPAIGN_NAME, COL_VARIATION, COL_ALL_CTR, COL_ALL_SENT,
-             COL_ANDROID_TITLE, COL_ANDROID_BODY, 'primary_conversions', 'bu', 'sent_month',
-             'tonality', 'brand_compliant', 'ab_winner', 'ab_lift_ctr',
+             COL_ALL_IMPRESSIONS, COL_ANDROID_TITLE, COL_ANDROID_BODY, 'primary_conversions',
+             'bu', 'sent_month', 'tonality', 'brand_compliant', 'ab_winner', 'ab_lift_ctr',
              'emoji_count_bucket', 'has_specific_number', 'title_length_bucket'}
     rename = {}
     for col in df.columns:
@@ -56,7 +56,7 @@ def build_ab_results(master: pd.DataFrame) -> pd.DataFrame:
     keep = [
         COL_CAMPAIGN_ID, COL_CAMPAIGN_NAME,
         'bu', 'sent_month',
-        COL_ALL_CTR, COL_ALL_SENT, 'primary_conversions',
+        COL_ALL_CTR, COL_ALL_SENT, COL_ALL_IMPRESSIONS, 'primary_conversions',
         'tonality', 'brand_compliant',
         'ab_winner', 'ab_lift_ctr',
         'emoji_count_bucket', 'has_specific_number', 'title_length_bucket',

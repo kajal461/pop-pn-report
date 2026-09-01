@@ -2373,7 +2373,28 @@ elif page == '🧪 A/B Testing Hub':
         camp_col = 'Campaign_ID' if 'Campaign_ID' in ab.columns else 'Campaign ID'
         n_campaigns = ab[camp_col].nunique() if camp_col in ab.columns else len(ab)
         winners     = ab[ab['_is_winner']]
-        avg_lift    = ab[ab['ab_lift_ctr'] > 0]['ab_lift_ctr'].mean()
+
+        # "Avg CTR Lift" must exclude pairs where the WINNING variation's
+        # own CTR is impression-unreliable (see MIN_IMPRESSION_RATE in
+        # config.py) - a lift computed from an untrustworthy winner CTR is
+        # equally untrustworthy, no matter how reliable the loser was.
+        # Caught 2026-09-01 via a live recheck: ab_detector.py correctly
+        # falls back to declaring a degraded winner when NEITHER variation
+        # in a pair has reliable tracking (tested, intentional behavior -
+        # better than silently dropping the pair) - but this headline
+        # metric was blindly averaging that degraded lift in alongside
+        # trustworthy ones. 23 such pairs inflated the live "Avg CTR Lift"
+        # from a true ~0.27% to a displayed ~0.70% - a ~2.6x overstatement
+        # of a number used to justify continued A/B testing investment.
+        if 'All_Platform_Impressions' in ab.columns and 'All_Platform_Sent' in ab.columns:
+            ab['All_Platform_Sent']        = pd.to_numeric(ab.get('All_Platform_Sent', 0), errors='coerce').fillna(0)
+            ab['All_Platform_Impressions'] = pd.to_numeric(ab.get('All_Platform_Impressions', 0), errors='coerce').fillna(0)
+            ab['_winner_reliable'] = ab['All_Platform_Impressions'] >= ab['All_Platform_Sent'] * MIN_IMPRESSION_RATE
+            _lift_rows = ab[(ab['ab_lift_ctr'] > 0) & ab['_is_winner']]
+            _reliable_lift_rows = _lift_rows[_lift_rows['_winner_reliable']]
+            avg_lift = _reliable_lift_rows['ab_lift_ctr'].mean() if not _reliable_lift_rows.empty else _lift_rows['ab_lift_ctr'].mean()
+        else:
+            avg_lift = ab[ab['ab_lift_ctr'] > 0]['ab_lift_ctr'].mean()
         n_months    = ab['sent_month'].nunique() if 'sent_month' in ab.columns else 0
 
         # ── Metric cards ──────────────────────────────────────────────────────
