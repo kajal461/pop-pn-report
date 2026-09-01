@@ -712,6 +712,28 @@ if page == '📊 Executive Overview':
             (~ov['period_label'].astype(str).isin(['NaT', 'nan', 'None', '']))
         ].copy()
 
+    # Suppress MOM deltas where the LATEST period is the real current
+    # calendar month and it just started - e.g. viewed on Sept 1 with 1 day
+    # / 22 campaigns of September data, a MOM delta against a full 31-day
+    # August reads as "-98.3% vs last month", looking like a catastrophic
+    # crash when it's actually just an incomplete-period artifact. The
+    # existing campaign_count<10 guard above doesn't catch this - 22
+    # campaigns clears that bar easily; the real problem is elapsed DAYS,
+    # not campaign volume. Applied here (not inside the if/else above) so
+    # it covers both the default view and the BU/period-filtered
+    # compute_overall() path uniformly. Caught 2026-09-01 right after an
+    # API gap-fill pull added a 1-day-old September row.
+    if 'period_label' in ov.columns and not ov.empty:
+        from datetime import date as _dt_date
+        _today_real         = _dt_date.today()
+        _current_month_str  = _today_real.strftime('%Y-%m')
+        _MIN_DAYS_FOR_FAIR_MOM = 5
+        if _today_real.day < _MIN_DAYS_FOR_FAIR_MOM:
+            _is_curr_month = ov['period_label'].astype(str) == _current_month_str
+            for dcol in ['mom_All_Platform_CTR_delta_pct', 'mom_All_Platform_Sent_delta_pct']:
+                if dcol in ov.columns:
+                    ov.loc[_is_curr_month, dcol] = None
+
     if ov.empty:
         st.warning('No data available for selected filters.')
     else:
@@ -1019,6 +1041,30 @@ elif page == '🏢 BU Performance':
             monthly[col] = pd.to_numeric(monthly[col], errors='coerce')
 
     latest_month = monthly['period_label'].max() if not monthly.empty and 'period_label' in monthly.columns else '—'
+
+    # If the chronologically-last period is the real current month and it
+    # just started (few days elapsed), it holds only a tiny fraction of a
+    # full month's campaigns - every BU's card and MOM% below would look
+    # like a catastrophic collapse purely from incompleteness, not a real
+    # trend. Fall back to the last COMPLETE month as the default "this
+    # month" reference. Skipped when the user has explicitly narrowed the
+    # sidebar month filter (period_filtered) - that's deliberate intent to
+    # view the partial month, not landing on it by accident via the
+    # unfiltered default. Same root cause as the Executive Overview MOM
+    # fix above, but this page needs the deeper fix since its ENTIRE
+    # display (cards, MOM%, best-campaign-per-BU) pivots on one single
+    # "latest_month" value rather than an aggregate. Caught 2026-09-01
+    # right after an API gap-fill pull added a 1-day-old September row:
+    # every BU showed MOM drops of 44-50%, and Shop's card read "6
+    # campaigns" instead of its normal 600+.
+    if not period_filtered and not monthly.empty and 'period_label' in monthly.columns:
+        from datetime import date as _dt_date
+        _today_real  = _dt_date.today()
+        _all_periods = sorted(monthly['period_label'].dropna().unique().tolist())
+        if (len(_all_periods) > 1 and _all_periods[-1] == _today_real.strftime('%Y-%m')
+                and _today_real.day < 5):
+            latest_month = _all_periods[-2]
+
     n_bus = monthly['bu'].nunique() if 'bu' in monthly.columns else 0
 
     # ── Page header ───────────────────────────────────────────────────────────
