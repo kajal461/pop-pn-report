@@ -75,7 +75,7 @@ ALL_BUS = [
     'UPI - Acquisition', 'UPI - Retention', 'RCBP', 'Shop', 'POPchop',
     'POPcard - Acquisition', 'POPcard - Activation',
     'Rupay - Activation', 'Rupay - Acquisition',
-    'Referral',
+    'Referral', 'Platform',
 ]
 
 # Tag columns to scan (all 4 MoEngage tag categories)

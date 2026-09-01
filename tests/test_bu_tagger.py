@@ -144,6 +144,38 @@ def test_unknown_remains_for_unrecognised():
     df = tag_bu(_row(**{'Campaign Name': 'MISC_001'}))
     assert df.iloc[0]['bu'] == 'Unknown'
 
+# ── Platform bucket (2026-09-01: app updates / failures / app-test sends) ────
+def test_app_update_campaign_goes_to_platform():
+    """App_update_2704 (19.8K sent, security patch nudge) was landing in
+    Unknown — has no BU tags at all and 'APP' isn't in CAMPAIGN_NAME_BU_MAP.
+    Explicitly routed to Platform going forward."""
+    df = tag_bu(_row(**{'Campaign Name': 'App_update_2704'}))
+    assert df.iloc[0]['bu'] == 'Platform'
+
+def test_failure_campaign_goes_to_platform_even_with_bu_prefix():
+    """UPI Failure 2 (74K sent) was landing in Unknown because its name uses
+    spaces instead of underscores, breaking the prefix-based fallback match.
+    Per explicit instruction, 'failure' now routes to Platform and takes
+    precedence over the UPI prefix — this is an override, not a fallback."""
+    df = tag_bu(_row(**{'Campaign Name': 'UPI Failure 2'}))
+    assert df.iloc[0]['bu'] == 'Platform'
+
+def test_failure_overrides_even_a_real_bu_tag():
+    """Platform routing is unconditional on name — it wins even when a tag
+    would otherwise resolve the row to a real BU."""
+    df = tag_bu(_row(**{COL_TAG_UNCATEGORIZED: "['UPI']", 'Campaign Name': 'UPI Failure 2'}))
+    assert df.iloc[0]['bu'] == 'Platform'
+
+def test_app_test_campaign_goes_to_platform():
+    df = tag_bu(_row(**{'Campaign Name': 'App_test_automation_01'}))
+    assert df.iloc[0]['bu'] == 'Platform'
+
+def test_bare_test_alone_does_not_go_to_platform():
+    """Test_01 (2 sent, hardcoded phone numbers) is explicitly left alone —
+    only 'app'+'test' together should match, not 'test' by itself."""
+    df = tag_bu(_row(**{'Campaign Name': 'Test_01'}))
+    assert df.iloc[0]['bu'] == 'Unknown'
+
 def test_nan_cells_return_unknown():
     df = pd.DataFrame([{
         COL_TAG_POPCARD: float('nan'), COL_TAG_RUPAY: float('nan'),

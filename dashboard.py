@@ -1053,7 +1053,8 @@ elif page == '🏢 BU Performance':
         # Colour map per BU
         bu_colours = {
             'UPI': '#4F46E5', 'POPcard': '#7C3AED', 'Rupay': '#0891b2',
-            'Shop': '#059669', 'RCBP': '#d97706', 'POPchop': '#dc2626', 'Unknown': '#94a3b8'
+            'Shop': '#059669', 'RCBP': '#d97706', 'POPchop': '#dc2626', 'Unknown': '#94a3b8',
+            'Platform': '#0d9488',
         }
 
         cards_per_row = min(3, len(latest_bu))

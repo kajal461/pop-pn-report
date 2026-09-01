@@ -22,6 +22,23 @@ def _parse_tag_list(value) -> list:
     return re.findall(r"'([^']+)'", value)
 
 
+# Campaign-name keywords that always route to the cross-BU "Platform" bucket,
+# regardless of tags — technical/operational campaigns (app updates, security
+# patches, transaction-failure retry nudges, app-level test sends) aren't
+# owned by a single business vertical. Checked BEFORE tag-based detection,
+# so it takes precedence — e.g. "UPI Failure 2" goes to Platform, not UPI.
+# Deliberately does NOT match bare "test" alone (e.g. "Test_01", a one-off
+# manual test send to hardcoded numbers) — only "app"+"test" together.
+_PLATFORM_NAME_KEYWORDS = ('update', 'failure')
+
+
+def _is_platform_campaign(name: str) -> bool:
+    n = name.lower()
+    if any(kw in n for kw in _PLATFORM_NAME_KEYWORDS):
+        return True
+    return 'app' in n and 'test' in n
+
+
 def _infer_bu_from_name_and_deeplink(row: pd.Series) -> str:
     """
     Fallback BU inference for untagged campaigns.
@@ -78,6 +95,11 @@ def _refine_upi_subtype(row: pd.Series) -> str:
 
 def _detect_bus(row: pd.Series) -> list:
     """Return all BU labels detected for a single row (deduplicated)."""
+    # Platform override: name-keyword match wins over tags entirely.
+    name = str(row.get(COL_CAMPAIGN_NAME, '') or '')
+    if _is_platform_campaign(name):
+        return ['Platform']
+
     found_set = set()
     found_order = []
 
