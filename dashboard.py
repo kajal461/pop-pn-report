@@ -4110,19 +4110,48 @@ elif page == '🧪 Control Group Analysis':
 elif page == '📅 Day-Over-Day (DOD)':
     import calendar as _cal
     from datetime import date as _date, timedelta as _td
+    from src.date_utils import same_day_offset_months
 
     # ── Load data ─────────────────────────────────────────────────────────────
-    dod_raw    = load_dod_daily()       # current month from dod_daily BQ table
-    overall_bq = load_table('summary_overall')  # for prior-month CTR comparison
+    dod_raw_full = load_dod_daily()             # full history, all months on record
+    overall_bq   = load_table('summary_overall')  # for prior-month CTR comparison
 
-    # ── Date helpers ──────────────────────────────────────────────────────────
-    _today       = _date.today()
-    _yesterday   = _today - _td(days=1)
-    _day_before  = _today - _td(days=2)
-    _month_name  = _today.strftime('%B %Y')
-    _days_in_mo  = _cal.monthrange(_today.year, _today.month)[1]
-    _days_elapsed = _today.day - 1  # complete days so far (excluding today)
-    _days_remain  = _days_in_mo - (_today.day - 1)
+    # ── Normalise column types (on the full table, before month-scoping) ─────
+    _num_cols = ['All_Platform_Sent','All_Platform_CTR','All_Platform_Clicks',
+                 'All_Platform_Impressions',
+                 'primary_conversions','All_Platform_FCM_Delivery_Rate',
+                 'click_to_convert_rate','end_to_end_funnel_rate','reachability_rate']
+    for _c in _num_cols:
+        if _c in dod_raw_full.columns:
+            dod_raw_full[_c] = pd.to_numeric(dod_raw_full[_c], errors='coerce').fillna(0)
+    if 'sent_date' in dod_raw_full.columns:
+        dod_raw_full['sent_date'] = pd.to_datetime(dod_raw_full['sent_date']).dt.date
+
+    # ── Month scoping ─────────────────────────────────────────────────────────
+    # DOD used to be hardcoded to "current calendar month only". It now
+    # follows the SAME global "Filter by Month" sidebar control every other
+    # page uses (selected_months / period_filtered, set up near the top of
+    # this file) — pick July there and this page shows July's daily
+    # breakdown. When nothing is narrowed (the default: all months selected)
+    # it keeps doing exactly what it always did: show the real current month.
+    _real_today        = _date.today()
+    _current_month_str = _real_today.strftime('%Y-%m')
+    _view_months = set(selected_months) if period_filtered else {_current_month_str}
+    _is_single_month_view  = len(_view_months) == 1
+    _is_current_month_view = _view_months == {_current_month_str}
+
+    # Derived from sent_date, NOT the table's own sent_month column — found
+    # live on 2026-09-01 that dod_daily's sent_month is unreliable (null for
+    # every August row, and even some July rows), presumably because the
+    # daily API-pull path doesn't always populate it the same way the CSV
+    # import path does. sent_date is always populated (upsert_dod_daily
+    # stamps it explicitly on every write), so deriving the month from it
+    # is the only trustworthy option here.
+    if 'sent_date' in dod_raw_full.columns:
+        _derived_month = pd.to_datetime(dod_raw_full['sent_date'], errors='coerce').dt.strftime('%Y-%m')
+        dod_raw = dod_raw_full[_derived_month.isin(_view_months)].copy()
+    else:
+        dod_raw = dod_raw_full.copy()
 
     # ── Last updated timestamp ────────────────────────────────────────────────
     if not dod_raw.empty and 'inserted_at' in dod_raw.columns:
@@ -4134,41 +4163,82 @@ elif page == '📅 Day-Over-Day (DOD)':
     else:
         _last_upd = 'Not yet — runs daily at 6:30am IST'
 
+    # ── No data state (checked before computing anchor/month-name below,
+    #    which assume at least one row exists) ────────────────────────────────
+    if dod_raw.empty:
+        _view_label = ' + '.join(month_labels.get(m, m) for m in sorted(_view_months))
+        st.markdown(f"""
+        <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:2px">
+            <h1 style="margin:0;font-size:28px;font-weight:800">📅 DOD Report</h1>
+            <span style="font-size:16px;color:#64748b;font-weight:600">{_view_label}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        st.info(
+            f'📭 **No DOD data yet for {_view_label}.**\n\n'
+            'The GitHub Actions job runs automatically at **6:30am IST every day** and pulls '
+            'yesterday\'s campaigns from MoEngage API into BigQuery. This page never deletes '
+            'old days, so if you\'re viewing a past month, a gap here means the automation '
+            'wasn\'t running yet at that time — not that data was lost.'
+        )
+        st.stop()
+
+    # ── Date helpers ──────────────────────────────────────────────────────────
+    # Generalizes "yesterday" / "day before" from "real wall-clock today" to
+    # "the latest day with data in the currently-viewed month(s)" — so a past
+    # month's Pulse/Trajectory cards compare its own last two days instead of
+    # comparing against days that belong to a different month (or don't
+    # exist at all).
+    _avail_dates = sorted(dod_raw['sent_date'].unique()) if 'sent_date' in dod_raw.columns else []
+
+    if _is_current_month_view:
+        _today      = _real_today
+        _yesterday  = _today - _td(days=1)
+        _day_before = _today - _td(days=2)
+    else:
+        _anchor     = _avail_dates[-1] if _avail_dates else _real_today
+        _today      = _anchor + _td(days=1)   # only used for the day-arithmetic above/below
+        _yesterday  = _anchor
+        _day_before = _avail_dates[-2] if len(_avail_dates) >= 2 else (_anchor - _td(days=1))
+
+    # Month label / days-in-month reflect the ACTUAL viewed month(s), not
+    # wherever `_today` above lands — if the anchor day is the last day of
+    # its month, `_today` (anchor + 1) rolls into the next month, which would
+    # silently mislabel everything below if used directly for these.
+    if _is_single_month_view:
+        _view_month_date = _date.fromisoformat(next(iter(_view_months)) + '-01')
+        _month_name = _view_month_date.strftime('%B %Y')
+        _days_in_mo = _cal.monthrange(_view_month_date.year, _view_month_date.month)[1]
+        if _is_current_month_view:
+            _days_elapsed = _real_today.day - 1  # complete days so far (excluding today)
+            _days_remain  = _days_in_mo - (_real_today.day - 1)
+        else:
+            _days_elapsed = len(_avail_dates)    # a past month is fully closed — "remaining" doesn't apply
+            _days_remain  = None
+        _prev_month_date = _view_month_date - _td(days=1)
+    else:
+        _view_month_date = None
+        _month_name      = ' + '.join(month_labels.get(m, m) for m in sorted(_view_months))
+        _days_in_mo       = None
+        _days_elapsed     = len(_avail_dates)
+        _days_remain      = None
+        _prev_month_date  = None
+
     # ── Page header ───────────────────────────────────────────────────────────
+    _scope_note = (
+        'Current month · Auto-refreshes at 6:30am IST · Historical data persists in BigQuery'
+        if _is_current_month_view else
+        f'Viewing {_month_name} via the sidebar month filter · Historical data persists in BigQuery'
+    )
     st.markdown(f"""
     <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:2px">
         <h1 style="margin:0;font-size:28px;font-weight:800">📅 DOD Report</h1>
         <span style="font-size:16px;color:#64748b;font-weight:600">{_month_name}</span>
         <span style="font-size:12px;color:#94a3b8;margin-left:auto">🕐 Last updated: {_last_upd}</span>
     </div>
-    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
-        Current month only · Auto-refreshes at 6:30am IST · Historical data persists in BigQuery
-    </p>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">{_scope_note}</p>
     """, unsafe_allow_html=True)
 
-    # ── No data state ─────────────────────────────────────────────────────────
-    if dod_raw.empty:
-        st.info(
-            '📭 **No DOD data yet for this month.**\n\n'
-            'The GitHub Actions job runs automatically at **6:30am IST every day** and will populate this page. '
-            'It pulls yesterday\'s campaigns from MoEngage API and stores them in BigQuery.\n\n'
-            'First data will appear tomorrow morning after the job runs.'
-        )
-        st.stop()
-
-    # ── Normalise column types ────────────────────────────────────────────────
-    _num_cols = ['All_Platform_Sent','All_Platform_CTR','All_Platform_Clicks',
-                 'All_Platform_Impressions',
-                 'primary_conversions','All_Platform_FCM_Delivery_Rate',
-                 'click_to_convert_rate','end_to_end_funnel_rate','reachability_rate']
-    for _c in _num_cols:
-        if _c in dod_raw.columns:
-            dod_raw[_c] = pd.to_numeric(dod_raw[_c], errors='coerce').fillna(0)
-    if 'sent_date' in dod_raw.columns:
-        dod_raw['sent_date'] = pd.to_datetime(dod_raw['sent_date']).dt.date
-
     # ── Filters — date only (BU uses global sidebar filter) ──────────────────
-    _avail_dates = sorted(dod_raw['sent_date'].unique()) if 'sent_date' in dod_raw.columns else []
     _date_opts   = ['All days'] + [str(d) for d in _avail_dates]
     _sel_bu      = selected_bus  # use global sidebar BU filter
 
@@ -4293,20 +4363,25 @@ elif page == '📅 Day-Over-Day (DOD)':
     _mtd_camps = int(dod_raw['Campaign_Name'].nunique()) if 'Campaign_Name' in dod_raw.columns else (
                  int(dod_raw['Campaign_ID'].nunique()) if 'Campaign_ID' in dod_raw.columns else 0)
 
-    # Prior month CTR from summary_overall
+    # Prior month CTR from summary_overall — only meaningful when viewing a
+    # single month (ambiguous otherwise), using _prev_month_date computed
+    # from the actual viewed month, not from `_today`'s day-arithmetic.
     _prev_ctr = None
-    if not overall_bq.empty and 'period_label' in overall_bq.columns:
-        _prev_month_str = (_today.replace(day=1) - _td(days=1)).strftime('%Y-%m')
+    if _is_single_month_view and _prev_month_date and not overall_bq.empty and 'period_label' in overall_bq.columns:
+        _prev_month_str = _prev_month_date.strftime('%Y-%m')
         _prev_row = overall_bq[overall_bq['period_label'].astype(str).str.startswith(_prev_month_str)]
         if not _prev_row.empty:
             _ctr_col_bq = 'All_Platform_CTR' if 'All_Platform_CTR' in _prev_row.columns else None
             if _ctr_col_bq:
                 _prev_ctr = float(pd.to_numeric(_prev_row[_ctr_col_bq], errors='coerce').iloc[-1])
 
-    # ── Section A: Yesterday's Pulse ──────────────────────────────────────────
+    # ── Section A: Latest Day's Pulse ─────────────────────────────────────────
+    # "Yesterday" only reads correctly when viewing the real current month —
+    # for a past month this is actually the last day with data that month.
+    _pulse_title = "Yesterday's" if _is_current_month_view else "Latest Day's"
     _yd_label = _yesterday.strftime('%-d %b')
     _db_label = _day_before.strftime('%-d %b')
-    st.markdown(f'<div class="section-header">⚡ Yesterday\'s Pulse — {_yd_label} vs {_db_label}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-header">⚡ {_pulse_title} Pulse — {_yd_label} vs {_db_label}</div>', unsafe_allow_html=True)
 
     if _yd_sent == 0:
         st.info(f'No data yet for {_yd_label}. The automation job will populate this at 6:30am IST.')
@@ -4322,7 +4397,7 @@ elif page == '📅 Day-Over-Day (DOD)':
         st.markdown(_pulse_html, unsafe_allow_html=True)
 
         # Context line
-        _prev_pace = f'Pace vs {(_today.replace(day=1) - _td(days=1)).strftime("%b")}: {_mtd_ctr - _prev_ctr:+.2f}pp' if _prev_ctr else ''
+        _prev_pace = f'Pace vs {_prev_month_date.strftime("%b")}: {_mtd_ctr - _prev_ctr:+.2f}pp' if _prev_ctr else ''
         st.markdown(
             f'<p style="color:#64748b;font-size:13px;margin:4px 0 12px">'
             f'Month avg CTR so far: <strong>{_mtd_ctr:.2f}%</strong>'
@@ -4341,7 +4416,7 @@ elif page == '📅 Day-Over-Day (DOD)':
             _rank = int(_yd_rank[0]) + 1
             _total_d = len(_sorted_days)
             _ord = {1:'1st',2:'2nd',3:'3rd'}.get(_rank, f'{_rank}th')
-            _ins_yd.append(f'Yesterday\'s **{_yd_ctr:.2f}% CTR** is the **{_ord} highest** day in {_today.strftime("%B")} (out of {_total_d} days with data).')
+            _ins_yd.append(f'{_pulse_title} **{_yd_ctr:.2f}% CTR** is the **{_ord} highest** day in {_month_name} (out of {_total_d} days with data).')
 
         # BU highlight (top BU yesterday by volume)
         if 'bu' in dod_raw.columns:
@@ -4401,7 +4476,7 @@ elif page == '📅 Day-Over-Day (DOD)':
                 _mult = _top_ctr / _yd_ctr
                 _ins_yd.append(f'⭐ **Top campaign:** "{_camp_nm}" — **{_top_ctr:.2f}% CTR** ({_mult:.1f}x the day\'s average).')
 
-        render_insight_box('What happened yesterday', _ins_yd, box_type='info')
+        render_insight_box(f'What happened {"yesterday" if _is_current_month_view else f"on {_yd_label}"}', _ins_yd, box_type='info')
 
     # ── Section C: Anomaly banner ─────────────────────────────────────────────
     if len(_daily) >= 3:
@@ -4454,14 +4529,28 @@ elif page == '📅 Day-Over-Day (DOD)':
 
     _traj_col1, _traj_col2, _traj_col3 = st.columns(3)
     with _traj_col1:
-        st.metric('Days elapsed', f'{_days_elapsed} of {_days_in_mo}',
-                  delta=f'{_days_remain} remaining', delta_color='off')
+        if _days_remain is not None:
+            # True current-month view — identical to the original behaviour.
+            st.metric('Days elapsed', f'{_days_elapsed} of {_days_in_mo}',
+                      delta=f'{_days_remain} remaining', delta_color='off')
+        elif _days_in_mo is not None:
+            # A closed past month — "remaining" doesn't apply; show how much
+            # of it actually has data instead (should equal _days_in_mo
+            # unless the automation had a gap).
+            _missing = _days_in_mo - _days_elapsed
+            st.metric('Days with data', f'{_days_elapsed} of {_days_in_mo}',
+                      delta=('complete month' if _missing <= 0 else f'{_missing} day(s) missing'),
+                      delta_color='off')
+        else:
+            # Multiple months selected — no single "days in month" concept.
+            st.metric('Days with data', f'{_days_elapsed}', delta='across selected months', delta_color='off')
     with _traj_col2:
-        _proj_str = f'{_mtd_ctr:.2f}%'
-        _proj_delta = f'{_mtd_ctr - _prev_ctr:+.2f}pp vs {(_today.replace(day=1) - _td(days=1)).strftime("%b")}' if _prev_ctr else None
-        st.metric('Projected month-end CTR', _proj_str, delta=_proj_delta)
+        _proj_str   = f'{_mtd_ctr:.2f}%'
+        _proj_delta = f'{_mtd_ctr - _prev_ctr:+.2f}pp vs {_prev_month_date.strftime("%b")}' if _prev_ctr else None
+        _proj_label = 'Projected month-end CTR' if _days_remain is not None else 'Avg CTR (selected period)'
+        st.metric(_proj_label, _proj_str, delta=_proj_delta)
     with _traj_col3:
-        st.metric('MTD Campaigns', f'{_mtd_camps:,}',
+        st.metric('MTD Campaigns' if _days_remain is not None else 'Campaigns', f'{_mtd_camps:,}',
                   delta=f'{_sfmt(_mtd_sent)} notifications sent')
 
     if _best_row is not None and _worst_row is not None:
@@ -4474,14 +4563,18 @@ elif page == '📅 Day-Over-Day (DOD)':
             unsafe_allow_html=True
         )
 
-    # Month pace insights
+    # Month pace insights — "at current pace...will close" is a forward
+    # projection, only honest for the real in-progress month. A past,
+    # already-closed month gets past-tense phrasing instead.
     _pace_ins = []
     if _prev_ctr:
-        _prev_mo_name = (_today.replace(day=1) - _td(days=1)).strftime('%B')
+        _prev_mo_name = _prev_month_date.strftime('%B')
+        _this_mo_name = _view_month_date.strftime('%B') if _view_month_date else _month_name
+        _lead = f'At current pace, {_this_mo_name} will close' if _days_remain is not None else f'{_this_mo_name} closed'
         if _mtd_ctr > _prev_ctr:
-            _pace_ins.append(f'At current pace, {_today.strftime("%B")} will close at **{_mtd_ctr:.2f}% CTR** — **{_mtd_ctr - _prev_ctr:+.2f}pp above** {_prev_mo_name}\'s close.')
+            _pace_ins.append(f'{_lead} at **{_mtd_ctr:.2f}% CTR** — **{_mtd_ctr - _prev_ctr:+.2f}pp above** {_prev_mo_name}\'s close.')
         else:
-            _pace_ins.append(f'At current pace, {_today.strftime("%B")} will close at **{_mtd_ctr:.2f}% CTR** — **{abs(_mtd_ctr - _prev_ctr):.2f}pp below** {_prev_mo_name} ({_prev_ctr:.2f}%). Room to improve.')
+            _pace_ins.append(f'{_lead} at **{_mtd_ctr:.2f}% CTR** — **{abs(_mtd_ctr - _prev_ctr):.2f}pp below** {_prev_mo_name} ({_prev_ctr:.2f}%). Room to improve.')
 
     if 'bu' in dod_raw.columns and not overall_bq.empty:
         _bu_mtd = dod_raw.groupby('bu').apply(
@@ -4498,7 +4591,7 @@ elif page == '📅 Day-Over-Day (DOD)':
                 _pace_ins.append(f'**Lagging vs {_prev_mo_name}:** {", ".join(_lag_bus)} — worth a copy/targeting review.')
 
     if _pace_ins:
-        render_insight_box(f'Month pace — {_today.strftime("%B")}', _pace_ins, box_type='success')
+        render_insight_box(f'Month pace — {_month_name}', _pace_ins, box_type='success')
 
     # ── Section E: Day-by-Day Chart ───────────────────────────────────────────
     st.markdown('<div class="section-header">📊 Day-by-Day Performance</div>', unsafe_allow_html=True)
@@ -4532,6 +4625,55 @@ elif page == '📅 Day-Over-Day (DOD)':
     # ── Section F: BU Breakdown ───────────────────────────────────────────────
     _focus_date_str = _yd_str if _sel_date == 'All days' else _sel_date
     _focus_label    = _yesterday.strftime('%-d %b') if _sel_date == 'All days' else _sel_date
+
+    # ── Same Day vs Prior Months ──────────────────────────────────────────────
+    # Same day-of-month, one and two calendar months back — looked up from
+    # dod_raw_full (the FULL unscoped history), not the month-filtered
+    # dod_raw, since a comparison point by definition lives outside the
+    # currently-viewed month. Good for spotting a recurring monthly pattern
+    # (e.g. a salary-date spike) vs. a genuine trend change.
+    st.markdown(f'<div class="section-header">📆 Same Day vs Prior Months — {_focus_label}</div>', unsafe_allow_html=True)
+    _focus_dt  = pd.to_datetime(_focus_date_str).date()
+    _cmp_specs = [(_focus_dt, 'This day'),
+                  (same_day_offset_months(_focus_dt, 1), '1 month ago'),
+                  (same_day_offset_months(_focus_dt, 2), '2 months ago')]
+    _cmp_cards = []
+    for _cd, _cd_label in _cmp_specs:
+        _cd_data = (dod_raw_full[dod_raw_full['sent_date'].astype(str) == str(_cd)]
+                    if 'sent_date' in dod_raw_full.columns else pd.DataFrame())
+        if _cd_data.empty:
+            _cmp_cards.append(
+                '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px">'
+                f'<div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.5px">{_cd_label} · {_cd.strftime("%-d %b %Y")}</div>'
+                '<div style="font-size:14px;color:#94a3b8;margin-top:10px">No data</div></div>'
+            )
+            continue
+        # Same impression-reliability guard used everywhere else in this
+        # file (see MIN_IMPRESSION_RATE in config.py) — a comparison day
+        # with broken tracking shouldn't get to claim a misleadingly huge
+        # or tiny CTR just because it's being looked up individually here.
+        _cd_sent_s   = pd.to_numeric(_cd_data.get('All_Platform_Sent', 0), errors='coerce').fillna(0)
+        _cd_ctr_s    = pd.to_numeric(_cd_data.get('All_Platform_CTR', 0), errors='coerce').fillna(0)
+        _cd_impr_s   = pd.to_numeric(_cd_data.get('All_Platform_Impressions', 0), errors='coerce').fillna(0)
+        _cd_reliable = _cd_impr_s >= _cd_sent_s * MIN_IMPRESSION_RATE
+        _cd_denom    = _cd_sent_s.where(_cd_reliable, 0).sum()
+        _cd_ctr      = ((_cd_sent_s * _cd_ctr_s / 100).where(_cd_reliable, 0).sum() / _cd_denom * 100) if _cd_denom > 0 else 0
+        _cd_sent     = _cd_sent_s.sum()
+        _cd_conv     = pd.to_numeric(_cd_data.get('primary_conversions', 0), errors='coerce').fillna(0).sum() if 'primary_conversions' in _cd_data.columns else 0
+        _cd_camps    = _cd_data['Campaign_Name'].nunique() if 'Campaign_Name' in _cd_data.columns else len(_cd_data)
+        _cmp_cards.append(
+            '<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px">'
+            f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px">{_cd_label} · {_cd.strftime("%-d %b %Y")}</div>'
+            f'<div style="font-size:24px;font-weight:800;color:#0f172a;margin:6px 0">{_cd_ctr:.2f}<span style="font-size:13px;color:#64748b;font-weight:600">% CTR</span></div>'
+            f'<div style="font-size:12px;color:#64748b">{_sfmt(_cd_sent)} sent · {int(_cd_camps)} campaigns · {_sfmt(_cd_conv)} conversions</div>'
+            '</div>'
+        )
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:14px 0">{"".join(_cmp_cards)}</div>',
+        unsafe_allow_html=True
+    )
+    st.caption('Same calendar day-of-month, one and two months back — pulled from full history regardless of the month filter above.')
+
     st.markdown(f'<div class="section-header">🏢 By BU — {_focus_label}</div>', unsafe_allow_html=True)
 
     _focus_data = dod_raw[dod_raw['sent_date'].astype(str) == _focus_date_str].copy()

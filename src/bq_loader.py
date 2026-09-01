@@ -73,17 +73,17 @@ def load_table(table: str) -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def load_dod_daily() -> pd.DataFrame:
     """
-    Load dod_daily table filtered to current calendar month.
+    Load the FULL dod_daily table (all months on record, not just the
+    current calendar month). 2026-09-01: DOD page now supports viewing any
+    month via the sidebar's global month filter, and a same-day-last-month
+    comparison that needs to reach back across month boundaries — both
+    require full history to be available here. The dashboard applies its
+    own month scoping on top of this (defaulting to the current month when
+    the global filter isn't narrowed, exactly like the old behaviour).
     Returns empty DataFrame if table doesn't exist yet (before first automation run).
     """
-    from datetime import date
     client = _client()
-    month_start = date.today().replace(day=1).strftime('%Y-%m-%d')
-    query = (
-        f'SELECT * FROM `{PROJECT_ID}.{DATASET}.dod_daily` '
-        f"WHERE sent_date >= '{month_start}' "
-        f'ORDER BY sent_date DESC'
-    )
+    query = f'SELECT * FROM `{PROJECT_ID}.{DATASET}.dod_daily` ORDER BY sent_date DESC'
     try:
         rows = client.query(query).result()
         return pd.DataFrame([dict(row.items()) for row in rows])
