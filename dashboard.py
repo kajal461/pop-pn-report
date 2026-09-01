@@ -4301,8 +4301,18 @@ elif page == '📅 Day-Over-Day (DOD)':
         _s    = 'All_Platform_Sent'
         _ctr  = 'All_Platform_CTR'
         _impr = 'All_Platform_Impressions'
-        _name = 'Campaign_Name' if 'Campaign_Name' in df.columns else (
-                'Campaign_ID'   if 'Campaign_ID'   in df.columns else df.columns[0])
+        # Campaign_ID, not Campaign_Name - a real, non-negotiable uniqueness
+        # guarantee per campaign (A/B variations of the same campaign DO
+        # share one Campaign_ID, so this still collapses them correctly).
+        # Campaign_Name can be a BLANK STRING (not just missing) for
+        # campaigns MoEngage's Search API couldn't resolve a name for - and
+        # since pandas' nunique() counts '' as one shared value, counting
+        # by name silently collapsed 10 genuinely distinct unresolved-name
+        # campaigns on 31 Aug down to "2" (live BU table showed 2 while the
+        # campaign list below it showed 10 rows). Caught 2026-09-01 from a
+        # screenshot of that exact mismatch.
+        _name = 'Campaign_ID' if 'Campaign_ID' in df.columns else (
+                'Campaign_Name' if 'Campaign_Name' in df.columns else df.columns[0])
         _conv = 'primary_conversions'
         df = df.copy()
         # _wt_clicks = Sent * CTR/100 is "implied clicks" for the day's
@@ -4336,7 +4346,7 @@ elif page == '📅 Day-Over-Day (DOD)':
             df['_wt_clicks'] = 0
             df['_ctr_denom_sent'] = 0
         agg = df.groupby('sent_date').agg(
-            campaigns=(_name, 'nunique'),   # unique names = true campaign count
+            campaigns=(_name, 'nunique'),   # unique Campaign_ID = true campaign count
             sent=(_s, 'sum') if _s in df.columns else (_name, 'count'),
             wt_clicks=('_wt_clicks', 'sum'),
             ctr_denom_sent=('_ctr_denom_sent', 'sum'),
@@ -4405,9 +4415,10 @@ elif page == '📅 Day-Over-Day (DOD)':
     _mtd_ctr_denom = float(_daily['ctr_denom_sent'].sum()) if 'ctr_denom_sent' in _daily.columns else _mtd_sent
     _mtd_ctr   = (_mtd_wt_cl / _mtd_ctr_denom * 100)   if _mtd_ctr_denom else 0
     _mtd_conv  = float(_daily['conversions'].sum()) if not _daily.empty else 0
-    # Use unique Campaign_Name to avoid inflating count with A/B test variations
-    _mtd_camps = int(dod_raw['Campaign_Name'].nunique()) if 'Campaign_Name' in dod_raw.columns else (
-                 int(dod_raw['Campaign_ID'].nunique()) if 'Campaign_ID' in dod_raw.columns else 0)
+    # Campaign_ID, not Campaign_Name - see _day_agg's comment above for why
+    # (blank names collapse genuinely distinct campaigns together).
+    _mtd_camps = int(dod_raw['Campaign_ID'].nunique()) if 'Campaign_ID' in dod_raw.columns else (
+                 int(dod_raw['Campaign_Name'].nunique()) if 'Campaign_Name' in dod_raw.columns else 0)
 
     # Prior month CTR from summary_overall — only meaningful when viewing a
     # single month (ambiguous otherwise), using _prev_month_date computed
@@ -4706,7 +4717,9 @@ elif page == '📅 Day-Over-Day (DOD)':
         _cd_ctr      = ((_cd_sent_s * _cd_ctr_s / 100).where(_cd_reliable, 0).sum() / _cd_denom * 100) if _cd_denom > 0 else 0
         _cd_sent     = _cd_sent_s.sum()
         _cd_conv     = pd.to_numeric(_cd_data.get('primary_conversions', 0), errors='coerce').fillna(0).sum() if 'primary_conversions' in _cd_data.columns else 0
-        _cd_camps    = _cd_data['Campaign_Name'].nunique() if 'Campaign_Name' in _cd_data.columns else len(_cd_data)
+        # Campaign_ID, not Campaign_Name - same blank-name collision as
+        # _day_agg above; this card feeds directly off it.
+        _cd_camps    = _cd_data['Campaign_ID'].nunique() if 'Campaign_ID' in _cd_data.columns else len(_cd_data)
         _cmp_cards.append(
             '<div style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px">'
             f'<div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px">{_cd_label} · {_cd.strftime("%-d %b %Y")}</div>'
@@ -4732,9 +4745,16 @@ elif page == '📅 Day-Over-Day (DOD)':
             _s = _g['All_Platform_Sent'].sum()
             return ((_g['All_Platform_Sent'] * _g['All_Platform_CTR']).sum() / _s) if _s > 0 else 0
 
-        _camp_name_col = 'Campaign_Name' if 'Campaign_Name' in _focus_data.columns else 'Campaign_ID'
+        # Campaign_ID, not Campaign_Name - this is the exact table that
+        # exposed the bug: 10 distinct 31-Aug campaigns tagged bu=Unknown
+        # had a blank ('', not even null) Campaign_Name, so nunique()
+        # counted them as "2" here while the Campaigns table below (which
+        # lists every row rather than deduplicating) correctly showed all
+        # 10. Campaign_ID has no such collision and still correctly
+        # collapses genuine A/B variations (they share one Campaign_ID).
+        _camp_name_col = 'Campaign_ID' if 'Campaign_ID' in _focus_data.columns else 'Campaign_Name'
         _bu_focus = _focus_data.groupby('bu').agg(
-            campaigns=(_camp_name_col,'nunique'),  # unique names to avoid A/B inflation
+            campaigns=(_camp_name_col,'nunique'),  # unique Campaign_ID to avoid A/B inflation
             sent=('All_Platform_Sent','sum'),
             conversions=('primary_conversions','sum') if 'primary_conversions' in _focus_data.columns else ('bu','count'),
         ).reset_index()
