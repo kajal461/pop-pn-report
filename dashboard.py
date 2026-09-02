@@ -4382,6 +4382,19 @@ elif page == '📅 Day-Over-Day (DOD)':
         )
 
     # ── Yesterday's data ──────────────────────────────────────────────────────
+    # When a specific day is picked in the Day filter above, the WHOLE page
+    # should pivot to that day - not just the By-BU/Campaigns/Same-Day
+    # tables further down. Previously "Latest Day's Pulse" and "What
+    # happened" always anchored to the latest day regardless of this
+    # selector, so picking a different day looked like it did nothing at
+    # all (caught 2026-09-01 live: selected several different days and
+    # every number in the Pulse cards stayed identical - only the section
+    # headers below changed). Month-level sections (Trajectory, anomaly
+    # banner) intentionally stay unaffected - they're multi-day by design.
+    if _sel_date != 'All days':
+        _yesterday  = pd.to_datetime(_sel_date).date()
+        _day_before = _yesterday - _td(days=1)
+
     _yd_str  = str(_yesterday)
     _db_str  = str(_day_before)
     _yd_row  = _daily[_daily['sent_date'].astype(str) == _yd_str]
@@ -4433,9 +4446,15 @@ elif page == '📅 Day-Over-Day (DOD)':
                 _prev_ctr = float(pd.to_numeric(_prev_row[_ctr_col_bq], errors='coerce').iloc[-1])
 
     # ── Section A: Latest Day's Pulse ─────────────────────────────────────────
-    # "Yesterday" only reads correctly when viewing the real current month —
-    # for a past month this is actually the last day with data that month.
-    _pulse_title = "Yesterday's" if _is_current_month_view else "Latest Day's"
+    # "Yesterday" only reads correctly when viewing the real current month
+    # AND no specific day has been explicitly picked - a past month, or an
+    # explicitly-selected day, means this isn't actually "yesterday".
+    if _sel_date != 'All days':
+        _pulse_title = 'Selected Day\'s'
+    elif _is_current_month_view:
+        _pulse_title = "Yesterday's"
+    else:
+        _pulse_title = "Latest Day's"
     _yd_label = _yesterday.strftime('%-d %b')
     _db_label = _day_before.strftime('%-d %b')
     st.markdown(f'<div class="section-header">⚡ {_pulse_title} Pulse — {_yd_label} vs {_db_label}</div>', unsafe_allow_html=True)
@@ -4533,7 +4552,8 @@ elif page == '📅 Day-Over-Day (DOD)':
                 _mult = _top_ctr / _yd_ctr
                 _ins_yd.append(f'⭐ **Top campaign:** "{_camp_nm}" — **{_top_ctr:.2f}% CTR** ({_mult:.1f}x the day\'s average).')
 
-        render_insight_box(f'What happened {"yesterday" if _is_current_month_view else f"on {_yd_label}"}', _ins_yd, box_type='info')
+        _happened_when = 'yesterday' if (_is_current_month_view and _sel_date == 'All days') else f'on {_yd_label}'
+        render_insight_box(f'What happened {_happened_when}', _ins_yd, box_type='info')
 
     # ── Section C: Anomaly banner ─────────────────────────────────────────────
     if len(_daily) >= 3:
