@@ -1,22 +1,31 @@
-name: Master Enriched Weekly Update
+name: Master Enriched Daily Update
 
-# Scheduled: runs every Monday at 07:00 IST (01:30 UTC) — pulls the last 10
-#            days (10 > 7 so the window overlaps the prior run; safe because
-#            upsert_master_enriched dedupes by Campaign_ID+Variation, newest
-#            wins — no duplicate rows from the overlap).
-# Manual:    trigger from GitHub UI with a custom day count to backfill a gap
+# Scheduled: runs every day at 07:00 IST (01:30 UTC) — 30 minutes after
+#            the DOD Daily Update job (06:30 IST), so this run's recurring-
+#            campaign exclusion check (see find_recurring_campaign_ids in
+#            src/loader.py) sees dod_daily's freshest possible state.
+#            Pulls the last 3 days (3 > 1 so the window overlaps the prior
+#            day's run; safe because upsert_master_enriched dedupes by
+#            Campaign_ID+Variation, newest wins — no duplicate rows from
+#            the overlap). Changed from a weekly 10-day pull to this daily
+#            3-day pull on 2026-09-02 so the report never again needs a
+#            manual CSV upload to stay current - every page now reflects
+#            at most a few hours' lag behind MoEngage automatically.
+# Manual:    trigger from GitHub UI with a custom day count to backfill a
+#            gap (e.g. after this automation was paused, or to recover
+#            from a missed run)
 #
 # To backfill a larger gap (e.g. 25 days):
-#   GitHub → Actions → Master Enriched Weekly Update → Run workflow
+#   GitHub → Actions → Master Enriched Daily Update → Run workflow
 #   days: 25
 
 on:
   schedule:
-    - cron: '30 1 * * 1'   # UTC 01:30 Monday = IST 07:00 Monday
+    - cron: '30 1 * * *'   # UTC 01:30 daily = IST 07:00 daily
   workflow_dispatch:
     inputs:
       days:
-        description: 'Number of days to pull from API (leave blank for default 10)'
+        description: 'Number of days to pull from API (leave blank for default 3)'
         required: false
         default: ''
 
@@ -52,7 +61,7 @@ jobs:
           BQ_DATASET: pn_report
         run: |
           DAYS="${{ github.event.inputs.days }}"
-          if [ -z "$DAYS" ]; then DAYS=10; fi
+          if [ -z "$DAYS" ]; then DAYS=3; fi
           echo "Pulling last $DAYS days into master_enriched"
           python run_report.py --api --days "$DAYS" --target master_enriched
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # run_report.py
 """
-POP PN Performance Report — Weekly Runner
+POP PN Performance Report — Report Runner
+(invoked daily by both GitHub Actions workflows; --csv/manual --api runs
+below are for local testing and one-off backfills, not required day to day)
 
 Usage:
     python run_report.py                          # reads from Google Sheets

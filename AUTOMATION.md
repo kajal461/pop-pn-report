@@ -1,9 +1,11 @@
 # POP PN Report — Automation Guide
 
-## Current setup: GitHub Actions (fully automatic, two workflows)
+## Current setup: GitHub Actions (fully automatic, two workflows, both daily)
 
 Both workflows use the same GitHub secrets and write to the same BigQuery
-dataset, but feed different parts of the dashboard — see below.
+dataset, but feed different parts of the dashboard — see below. As of
+2026-09-02, **no page requires a manual CSV upload to stay current** —
+every table refreshes on its own every day.
 
 ### 1. `dod_daily_update.yml` — daily, feeds the DOD page only
 - Runs every day at **01:00 UTC (06:30 IST)**
@@ -11,10 +13,12 @@ dataset, but feed different parts of the dashboard — see below.
   (`copies-qc.pn_report.dod_daily`)
 - Feeds only the dashboard's **Day-Over-Day (DOD)** page
 
-### 2. `master_enriched_weekly.yml` — weekly, feeds every other page
-- Runs every **Monday at 01:30 UTC (07:00 IST)**
-- Pulls the **last 10 days** and upserts into `master_enriched`
-  (`copies-qc.pn_report.master_enriched`) — 10 > 7 so each run's window
+### 2. `master_enriched_daily.yml` — daily, feeds every other page
+- Runs every **day at 01:30 UTC (07:00 IST)** — 30 minutes after the DOD
+  job above, so its recurring-campaign exclusion check (which
+  cross-references `dod_daily`) sees the freshest possible data
+- Pulls the **last 3 days** and upserts into `master_enriched`
+  (`copies-qc.pn_report.master_enriched`) — 3 > 1 so each run's window
   overlaps the previous one; safe, because rows are deduped by
   `Campaign_ID` + `Variation` with the newest data winning
 - Feeds **every other page**: Executive Overview, BU Performance, Copy
@@ -22,9 +26,16 @@ dataset, but feed different parts of the dashboard — see below.
   Hub, Timing & Frequency, Segment Intelligence, Channel Intelligence,
   Control Group Analysis — and the sidebar **Filter by Month** widget, which
   reads its month list directly from this table
-- **Added 2026-08-11** after `master_enriched` was found stalled at July 20
-  for three weeks — it had only ever been updated by someone remembering to
-  run `run_report.py` manually. This workflow removes that dependency.
+- **Added 2026-08-11** as a **weekly** job (Monday only, last-10-days pull)
+  after `master_enriched` was found stalled at July 20 for three weeks — it
+  had only ever been updated by someone remembering to run `run_report.py`
+  manually.
+- **Changed to daily on 2026-09-02** (last-3-days pull) so the report is
+  fully self-sufficient going forward — a manual CSV had been needed once
+  more in the interim to fill a real gap left by a BigQuery table-expiration
+  bug (since fixed) that briefly wiped `master_enriched`'s history; that
+  shouldn't recur, and daily API pulls now mean it wouldn't matter even if
+  it did — the next day's run fills any gap within a day.
 
 Neither workflow updates the other's table. If one page looks stale, check
 which workflow actually feeds it before assuming the other one is broken.
@@ -46,7 +57,7 @@ pull outside the schedule.
 GitHub → Actions → pick the workflow → Run workflow:
 - **DOD Daily Update**: `date_from` / `date_to` (`YYYY-MM-DD`), loops
   day-by-day over the range
-- **Master Enriched Weekly Update**: `days` (integer) — pulls that many days
+- **Master Enriched Daily Update**: `days` (integer) — pulls that many days
   back from today in one call
 
 ### How the data behaves

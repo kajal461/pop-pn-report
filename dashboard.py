@@ -624,7 +624,7 @@ if st.sidebar.button('🔄 Refresh Data'):
     st.cache_data.clear()  # clears any other st.cache_data caches
     st.rerun()
 
-st.sidebar.caption('Data refreshes automatically after each weekly run of run_report.py')
+st.sidebar.caption('Data refreshes automatically every day (~7am IST) — no manual upload needed')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
