@@ -53,6 +53,8 @@ This framework drives the LLM system prompt directly (Section 5). The **existing
 
 **Brief sheet:** https://docs.google.com/spreadsheets/d/1B0-gNhPzhN1hphK_G7B1ZxcYryHTSNrqeTIqUDM8HGs/edit?gid=744577602#gid=744577602 (spreadsheet ID `1B0-gNhPzhN1hphK_G7B1ZxcYryHTSNrqeTIqUDM8HGs`, brief tab `gid=744577602`). This is separate from the existing 7-tab output spreadsheet already written by `sheets_writer.py` — implementation will need to confirm the exact tab name and existing column headers on this sheet before adding the new columns below.
 
+**Test vs. production sheet:** the sheet above is a **test copy** of the real brief sheet the copywriter team uses, shared with copywriters specifically so all of this can be validated end-to-end without touching production. All configuration (env vars, GitHub Actions secrets, Cloud Run config, Apps Script) uses a `TEST_SHEET_ID` pointing at this copy throughout implementation and initial rollout. Switching to the real production sheet is a deliberate later step — swap `TEST_SHEET_ID` for `PROD_SHEET_ID` only after the team has validated suggestion quality and the feedback loop on the test copy. This is called out explicitly as an implementation task, not left implicit.
+
 Five columns are added to the existing team brief sheet (all other existing brief columns — BU, product, price, offer, brand, campaign type, etc. — are untouched):
 
 | Column | Written by | Purpose |
