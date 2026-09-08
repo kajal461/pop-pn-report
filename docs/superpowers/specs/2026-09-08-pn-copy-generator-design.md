@@ -51,6 +51,8 @@ This framework drives the LLM system prompt directly (Section 5). The **existing
 
 ## 4. Sheet Schema Changes
 
+**Brief sheet:** https://docs.google.com/spreadsheets/d/1B0-gNhPzhN1hphK_G7B1ZxcYryHTSNrqeTIqUDM8HGs/edit?gid=744577602#gid=744577602 (spreadsheet ID `1B0-gNhPzhN1hphK_G7B1ZxcYryHTSNrqeTIqUDM8HGs`, brief tab `gid=744577602`). This is separate from the existing 7-tab output spreadsheet already written by `sheets_writer.py` — implementation will need to confirm the exact tab name and existing column headers on this sheet before adding the new columns below.
+
 Five columns are added to the existing team brief sheet (all other existing brief columns — BU, product, price, offer, brand, campaign type, etc. — are untouched):
 
 | Column | Written by | Purpose |
