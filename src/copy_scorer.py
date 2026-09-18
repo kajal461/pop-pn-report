@@ -12,7 +12,10 @@ import re
 
 import pandas as pd
 
-from config import COL_ALL_CTR, COL_ALL_SENT, COL_ALL_IMPRESSIONS, MIN_IMPRESSION_RATE
+from config import (
+    COL_ALL_CTR, COL_ALL_SENT, COL_ALL_IMPRESSIONS, MIN_IMPRESSION_RATE,
+    COL_ANDROID_TITLE, COL_ANDROID_BODY, COL_RICH_IMAGE,
+)
 from src.copy_analyser import analyse_copy
 from src.tonality_classifier import classify_tonality
 
@@ -26,6 +29,18 @@ def _sanitized(col: str) -> str:
     return safe
 
 
+def _find_col(df: pd.DataFrame, *candidates: str) -> str:
+    """Return the first of the given candidate column names that actually
+    exists in df, checking both the raw config name and its sanitized
+    (BigQuery-safe) form — master_enriched is always underscore-form in
+    practice (loaded from BigQuery), but this stays defensive against
+    being called with differently-shaped data."""
+    for name in candidates:
+        if name in df.columns:
+            return name
+    return candidates[-1]  # fall through to the last option; caller's `in df.columns` check will correctly report absence
+
+
 def build_historical_lookup(master_enriched: pd.DataFrame) -> pd.DataFrame:
     """
     Build a (bu, tonality) -> avg_ctr lookup table from master_enriched,
@@ -34,9 +49,9 @@ def build_historical_lookup(master_enriched: pd.DataFrame) -> pd.DataFrame:
     Returns a DataFrame with columns: bu, tonality, avg_ctr, campaign_count.
     """
     df = master_enriched.copy()
-    sent_col = _sanitized(COL_ALL_SENT)
-    impressions_col = _sanitized(COL_ALL_IMPRESSIONS)
-    ctr_col = _sanitized(COL_ALL_CTR)
+    sent_col = _find_col(df, _sanitized(COL_ALL_SENT), COL_ALL_SENT)
+    impressions_col = _find_col(df, _sanitized(COL_ALL_IMPRESSIONS), COL_ALL_IMPRESSIONS)
+    ctr_col = _find_col(df, _sanitized(COL_ALL_CTR), COL_ALL_CTR)
 
     if impressions_col in df.columns and sent_col in df.columns:
         sent = pd.to_numeric(df[sent_col], errors='coerce').fillna(0)
@@ -44,7 +59,10 @@ def build_historical_lookup(master_enriched: pd.DataFrame) -> pd.DataFrame:
         reliable = impressions >= sent * MIN_IMPRESSION_RATE
         df.loc[~reliable, ctr_col] = pd.NA
 
-    df[ctr_col] = pd.to_numeric(df[ctr_col], errors='coerce')
+    if ctr_col in df.columns:
+        df[ctr_col] = pd.to_numeric(df[ctr_col], errors='coerce')
+    else:
+        return pd.DataFrame(columns=['bu', 'tonality', 'avg_ctr', 'campaign_count'])
 
     if 'bu' not in df.columns or 'tonality' not in df.columns:
         return pd.DataFrame(columns=['bu', 'tonality', 'avg_ctr', 'campaign_count'])
@@ -74,9 +92,7 @@ def score_candidates(candidates: list, bu: str, historical_lookup: pd.DataFrame)
         return candidates
 
     frame = pd.DataFrame([
-        {'Android Message Title (Android, Web), Title (iOS)': c['title'],
-         'Android Message (Android, Web), Subtitle (iOS)': c['body'],
-         'Android Rich Content Image URL': ''}
+        {COL_ANDROID_TITLE: c['title'], COL_ANDROID_BODY: c['body'], COL_RICH_IMAGE: ''}
         for c in candidates
     ])
     analysed = analyse_copy(frame)

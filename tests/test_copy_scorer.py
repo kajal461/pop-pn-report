@@ -49,3 +49,18 @@ def test_score_candidates_returns_none_when_bu_has_no_history():
     candidates = [{'title': 'New feature available', 'body': 'Update installed successfully'}]
     scored = score_candidates(candidates, bu='POPchop', historical_lookup=lookup)
     assert scored[0]['rule_based_avg_ctr'] is None
+
+
+def test_build_historical_lookup_works_with_unsanitized_column_names():
+    from config import COL_ALL_SENT, COL_ALL_IMPRESSIONS, COL_ALL_CTR
+    df = pd.DataFrame([
+        {'bu': 'Shop', 'tonality': 'DO: Smart — Value-aware',
+         COL_ALL_SENT: 1000, COL_ALL_IMPRESSIONS: 500, COL_ALL_CTR: 10.0},
+        {'bu': 'Shop', 'tonality': 'DO: Smart — Value-aware',
+         COL_ALL_SENT: 1000, COL_ALL_IMPRESSIONS: 100, COL_ALL_CTR: 90.0},  # unreliable, should be masked
+    ])
+    lookup = build_historical_lookup(df)
+    shop_row = lookup[(lookup['bu'] == 'Shop') & (lookup['tonality'] == 'DO: Smart — Value-aware')]
+    assert len(shop_row) == 1
+    assert shop_row.iloc[0]['avg_ctr'] == 10.0  # only the reliable row counted
+    assert shop_row.iloc[0]['campaign_count'] == 1
