@@ -1,4 +1,5 @@
 # config.py
+import os
 from datetime import date
 
 # ── Google Sheets column names (MoEngage export) ────────────────────────────
@@ -248,8 +249,6 @@ BQ_LOCATION = 'US'         # Dataset location — change to 'asia-south1' if nee
 # Copy Generator — config for the PN Copy Generator feature (2026-09-08)
 # See docs/superpowers/specs/2026-09-08-pn-copy-generator-design.md
 # ══════════════════════════════════════════════════════════════════════════════
-import os
-
 # ── Brief sheet (separate spreadsheet from the 7-tab output sheet) ─────────────
 # TEST_SHEET_ID is a copy of the real brief sheet, shared with copywriters,
 # used for all development/testing. Switch COPY_GEN_SHEET_ENV to 'prod' only
