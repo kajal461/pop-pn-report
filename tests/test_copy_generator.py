@@ -156,3 +156,20 @@ def test_generate_with_self_check_updates_existing_insights_across_batch(mock_ge
     second_call_args = mock_regen.call_args_list[1]
     existing_insights_arg = second_call_args[0][1]  # regenerate_candidate(brief, existing_insights, model=...)
     assert 'angle c' in existing_insights_arg
+
+
+from src.copy_generator import validate_lengths
+
+
+def test_validate_lengths_flags_over_limit_title():
+    candidates = [{'title': 'x' * 100, 'body': 'short body'}]
+    validate_lengths(candidates)
+    assert candidates[0]['title_over_limit'] is True
+    assert candidates[0]['body_over_limit'] is False
+
+
+def test_validate_lengths_passes_within_limit():
+    candidates = [{'title': 'Short title', 'body': 'Short body'}]
+    validate_lengths(candidates)
+    assert candidates[0]['title_over_limit'] is False
+    assert candidates[0]['body_over_limit'] is False

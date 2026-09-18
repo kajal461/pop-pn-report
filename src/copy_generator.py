@@ -6,6 +6,7 @@ Cloud Run real-time entry point. See spec Section 5.
 """
 from config import (
     MAGICIAN_JESTER_SYSTEM_PROMPT, COPY_GEN_MODEL, COPY_GEN_CANDIDATE_COUNT,
+    ANDROID_TITLE_MAX_CHARS, ANDROID_BODY_MAX_CHARS,
 )
 from src.llm_client import call_llm_json, LLMError
 
@@ -138,3 +139,15 @@ def generate_with_self_check(brief: dict, model: str = None) -> list:
         ))
 
     return checked
+
+
+def validate_lengths(candidates: list) -> list:
+    """
+    Flag (don't truncate — truncating could break the line's meaning)
+    candidates whose title/body exceed MoEngage's display limits. Mutates
+    candidates in place and returns them for convenience.
+    """
+    for candidate in candidates:
+        candidate['title_over_limit'] = len(candidate.get('title', '')) > ANDROID_TITLE_MAX_CHARS
+        candidate['body_over_limit'] = len(candidate.get('body', '')) > ANDROID_BODY_MAX_CHARS
+    return candidates
