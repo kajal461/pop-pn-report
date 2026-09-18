@@ -57,3 +57,70 @@ def generate_candidates(brief: dict, model: str = None) -> list:
         _validate_candidate(candidate)
 
     return response
+
+
+def self_check_candidate(candidate: dict, model: str = None) -> bool:
+    """
+    Apply the "strip the joke" test: does the insight still hold up as true
+    and interesting if the wit/brevity trick is removed? Returns True if it
+    passes (the Magician actually showed up), False otherwise.
+    """
+    model = model or COPY_GEN_MODEL
+    system = 'You are a strict editor applying POP\'s Magician-Jester brand test.'
+    user = (
+        f'Line: "{candidate["title"]} — {candidate["body"]}"\n\n'
+        'Strip away any wit, brevity trick, or clever phrasing from this line. '
+        'Does the remaining insight still hold up as true and interesting on '
+        'its own? Return ONLY a JSON object: '
+        '{"insight_holds": true or false, "reason": "..."}'
+    )
+    response = call_llm_json(model, system, user)
+    return bool(response.get('insight_holds', False))
+
+
+def regenerate_candidate(brief: dict, existing_insights: list, model: str = None) -> dict:
+    """
+    Ask for exactly ONE replacement candidate with an insight different from
+    everything already generated for this brief.
+    """
+    model = model or COPY_GEN_MODEL
+    existing_list = '\n'.join(f'- {i}' for i in existing_insights)
+    user = build_user_prompt(brief, count=1) + (
+        f'\n\nDo NOT reuse any of these already-used insights/angles:\n{existing_list}'
+    )
+    response = call_llm_json(model, MAGICIAN_JESTER_SYSTEM_PROMPT, user)
+    # A single-candidate request may come back as a list of 1 or a bare object
+    candidate = response[0] if isinstance(response, list) else response
+    _validate_candidate(candidate)
+    return candidate
+
+
+def generate_with_self_check(brief: dict, model: str = None) -> list:
+    """
+    Generate candidates, then run the automated self-check on each. A
+    candidate that fails gets one regeneration attempt; if the replacement
+    still fails, it's kept but flagged rather than dropped (spec Section 5.2
+    / 9 — never fail silently).
+    """
+    model = model or COPY_GEN_MODEL
+    candidates = generate_candidates(brief, model=model)
+    existing_insights = [c['insight'] for c in candidates]
+
+    checked = []
+    for candidate in candidates:
+        passed = self_check_candidate(candidate, model=model)
+        if not passed:
+            replacement = regenerate_candidate(brief, existing_insights, model=model)
+            if self_check_candidate(replacement, model=model):
+                replacement['self_check_passed'] = True
+                checked.append(replacement)
+                continue
+            candidate['self_check_passed'] = False
+            candidate['self_check_flag'] = '⚠️ insight may be thin'
+            checked.append(candidate)
+            continue
+        candidate['self_check_passed'] = True
+        candidate['self_check_flag'] = None
+        checked.append(candidate)
+
+    return checked

@@ -52,3 +52,62 @@ def test_generate_candidates_raises_on_non_list_response(mock_call):
     mock_call.return_value = {'not': 'a list'}
     with pytest.raises(LLMError, match='expected a JSON array'):
         generate_candidates(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+
+
+from src.copy_generator import self_check_candidate, regenerate_candidate, generate_with_self_check
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_self_check_candidate_passes(mock_call):
+    mock_call.return_value = {'insight_holds': True, 'reason': 'still true without the wit'}
+    candidate = {'insight': 'x', 'title': 'Fast shoes, slower payments.', 'body': ''}
+    assert self_check_candidate(candidate, model='claude-sonnet-4-6') is True
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_self_check_candidate_fails(mock_call):
+    mock_call.return_value = {'insight_holds': False, 'reason': 'nothing left without the pun'}
+    candidate = {'insight': 'x', 'title': 'Scent-sibly priced', 'body': ''}
+    assert self_check_candidate(candidate, model='claude-sonnet-4-6') is False
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_regenerate_candidate_avoids_existing_insights(mock_call):
+    mock_call.return_value = [{'insight': 'new angle', 'title': 'T', 'body': 'B'}]
+    result = regenerate_candidate(SAMPLE_BRIEF, existing_insights=['angle a', 'angle b'], model='claude-sonnet-4-6')
+    assert result['insight'] == 'new angle'
+    _, kwargs = mock_call.call_args
+    assert 'angle a' in kwargs.get('user', mock_call.call_args[0][2] if len(mock_call.call_args[0]) > 2 else '')
+
+
+@patch('src.copy_generator.self_check_candidate')
+@patch('src.copy_generator.generate_candidates')
+def test_generate_with_self_check_flags_repeat_failures(mock_generate, mock_self_check):
+    mock_generate.return_value = [{'insight': 'a', 'title': 'T', 'body': 'B'}]
+    # Fails self-check both on the original AND the regenerated replacement
+    mock_self_check.return_value = False
+
+    with patch('src.copy_generator.regenerate_candidate') as mock_regen:
+        mock_regen.return_value = {'insight': 'a2', 'title': 'T2', 'body': 'B2'}
+        result = generate_with_self_check(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+
+    assert len(result) == 1
+    assert result[0]['self_check_passed'] is False
+    assert result[0]['self_check_flag'] == '⚠️ insight may be thin'
+
+
+@patch('src.copy_generator.self_check_candidate')
+@patch('src.copy_generator.generate_candidates')
+def test_generate_with_self_check_accepts_regenerated_replacement(mock_generate, mock_self_check):
+    mock_generate.return_value = [{'insight': 'a', 'title': 'T', 'body': 'B'}]
+    # Fails first check, passes second (on the regenerated replacement)
+    mock_self_check.side_effect = [False, True]
+
+    with patch('src.copy_generator.regenerate_candidate') as mock_regen:
+        mock_regen.return_value = {'insight': 'a2', 'title': 'T2', 'body': 'B2'}
+        result = generate_with_self_check(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+
+    assert len(result) == 1
+    assert result[0]['title'] == 'T2'
+    assert result[0]['self_check_passed'] is True
+    assert result[0].get('self_check_flag') is None
