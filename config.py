@@ -243,3 +243,95 @@ MIN_IMPRESSION_RATE = 0.30   # Impressions / Sent must be >= this to be eligible
 # ── BigQuery output configuration ─────────────────────────────────────────────
 BQ_DATASET = 'pn_report'   # BigQuery dataset name — created automatically on first run
 BQ_LOCATION = 'US'         # Dataset location — change to 'asia-south1' if needed
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Copy Generator — config for the PN Copy Generator feature (2026-09-08)
+# See docs/superpowers/specs/2026-09-08-pn-copy-generator-design.md
+# ══════════════════════════════════════════════════════════════════════════════
+import os
+
+# ── Brief sheet (separate spreadsheet from the 7-tab output sheet) ─────────────
+# TEST_SHEET_ID is a copy of the real brief sheet, shared with copywriters,
+# used for all development/testing. Switch COPY_GEN_SHEET_ENV to 'prod' only
+# after the team has validated suggestion quality on the test copy.
+TEST_SHEET_ID = '1B0-gNhPzhN1hphK_G7B1ZxcYryHTSNrqeTIqUDM8HGs'
+TEST_SHEET_TAB_GID = 744577602
+PROD_SHEET_ID = os.environ.get('PROD_BRIEF_SHEET_ID', '')      # set once ready to go live
+PROD_SHEET_TAB_GID = int(os.environ.get('PROD_SHEET_TAB_GID', '0') or '0')
+COPY_GEN_SHEET_ENV = os.environ.get('COPY_GEN_SHEET_ENV', 'test')  # 'test' or 'prod'
+BRIEF_SHEET_ID = PROD_SHEET_ID if COPY_GEN_SHEET_ENV == 'prod' else TEST_SHEET_ID
+BRIEF_SHEET_TAB_GID = PROD_SHEET_TAB_GID if COPY_GEN_SHEET_ENV == 'prod' else TEST_SHEET_TAB_GID
+
+# ── Brief sheet column names (EXISTING columns on the real sheet) ──────────────
+# NOTE: best-guess defaults from the design conversation. CONFIRMED/CORRECTED
+# by running `python scripts/inspect_brief_sheet.py` (Task 1) — update these
+# if the real headers differ.
+BRIEF_COL_BU            = 'BU'
+BRIEF_COL_PRODUCT       = 'Product'
+BRIEF_COL_PRICE         = 'Pricing'
+BRIEF_COL_OFFER         = 'Offer'
+BRIEF_COL_BRAND         = 'Brand'
+BRIEF_COL_CAMPAIGN_TYPE = 'Campaign Type'
+BRIEF_COL_SEGMENT       = 'Target Segment'  # optional column, may be blank
+
+# ── Brief sheet columns ADDED by this feature (exact names, we control these) ──
+BRIEF_COL_STATUS        = 'Copy Status'            # Pending / Suggested / Approved / Error
+BRIEF_COL_SUBMITTED_BY  = 'Submitted By'
+BRIEF_COL_SUGGESTIONS   = 'Suggested Options'       # JSON blob of all candidates + scores
+BRIEF_COL_FINAL_COPY    = 'Final Copy Used'
+BRIEF_COL_FINALIZED_BY  = 'Finalized/Edited By'
+
+STATUS_PENDING   = 'Pending'
+STATUS_SUGGESTED = 'Suggested'
+STATUS_APPROVED  = 'Approved'
+STATUS_ERROR     = 'Error'
+
+# ── MoEngage title/body length limits ───────────────────────────────────────────
+# Starting values based on typical Android push notification display limits.
+# CONFIRMED/CORRECTED during Task 1, Step 4 by checking real historical data.
+ANDROID_TITLE_MAX_CHARS = 65
+ANDROID_BODY_MAX_CHARS  = 240
+
+# ── LLM generation config ───────────────────────────────────────────────────────
+COPY_GEN_MODEL = os.environ.get('COPY_GEN_MODEL', 'claude-sonnet-4-6')
+COPY_GEN_CANDIDATE_COUNT = 5  # number of {insight, title, body} candidates per brief
+COPY_GEN_MAX_ROWS_PER_BATCH = int(os.environ.get('COPY_GEN_MAX_ROWS_PER_BATCH', '50'))
+
+LLM_MODEL_REGISTRY = {
+    'claude-sonnet-4-6': {'provider': 'anthropic', 'api_model': 'claude-sonnet-4-6'},
+    'claude-haiku-4-5':  {'provider': 'anthropic', 'api_model': 'claude-haiku-4-5'},
+    'kimi-k3':           {'provider': 'fireworks', 'api_model': 'kimi-k3'},
+    'glm-5p3':           {'provider': 'fireworks', 'api_model': 'glm-5p3'},
+    'gpt-5.4-mini':      {'provider': 'fireworks', 'api_model': 'gpt-5.4-mini'},
+}
+
+ANTHROPIC_GATEWAY_BASE_URL = os.environ.get(
+    'ANTHROPIC_GATEWAY_BASE_URL', 'https://llm-gateway.razorpay.com/v1'
+)
+ANTHROPIC_GATEWAY_API_KEY = os.environ.get('ANTHROPIC_GATEWAY_API_KEY', '')
+
+FIREWORKS_GATEWAY_BASE_URL = os.environ.get(
+    'FIREWORKS_GATEWAY_BASE_URL', 'https://llm-gateway-popclub.razorpay.com/v1'
+)
+FIREWORKS_GATEWAY_API_KEY = os.environ.get('FIREWORKS_GATEWAY_API_KEY', 'dummy')
+FIREWORKS_GATEWAY_LITELLM_KEY = os.environ.get('FIREWORKS_GATEWAY_LITELLM_KEY', '')
+
+# ── Magician-Jester brand voice framework ───────────────────────────────────────
+MAGICIAN_JESTER_SYSTEM_PROMPT = """You are a 30-year veteran push-notification copywriter for POP, a fintech app used by young Indians.
+
+POP's brand voice resolves a single tension in every line: the Magician-Jester archetype.
+
+THE MAGICIAN supplies the insight — it reveals a hidden mechanic in something ordinary that the user hasn't clocked yet. This is a real reframe, not decoration. Examples: "Water's free. This works better." / "Fast shoes, slower payments."
+
+THE JESTER supplies the deflation — it punctures the Magician's own seriousness before the user has to, usually through brevity or a concrete, unglamorous detail. It is NOT a separate joke bolted onto the insight.
+
+THE TWO MUST RESOLVE IN ONE BREATH. A serious insight followed by a joke fails. Wit with no insight underneath it also fails — this is the most common failure mode. Example of this failure: "Scent-sibly priced" — clever wordplay, but there is no hidden mechanic being revealed, nothing to deflate.
+
+SELF-CHECK: strip the wit from a line. If the remaining insight still holds up as true and interesting on its own, the line works. If nothing is left, the Magician never showed up — rewrite it.
+
+Approved example lines (for tone reference only — do not reuse these verbatim):
+- "Water's free. This works better."
+- "Fast shoes, slower payments."
+"""
+# NOTE: add the fuller set of approved example lines here from POP's brand
+# doc when available (spec Section 11, Open Items) — not blocking for v1.
