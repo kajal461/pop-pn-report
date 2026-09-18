@@ -178,3 +178,15 @@ def test_main_exits_nonzero_when_every_row_fails(
     with pytest.raises(SystemExit) as exc_info:
         generate_pending_copy.main()
     assert exc_info.value.code == 1
+
+
+@patch('generate_pending_copy.open_worksheet_with_header')
+def test_main_exits_cleanly_when_setup_fails(mock_open_ws, monkeypatch):
+    """A setup-time failure (bad credentials, no sheet access, etc.) should
+    print a clear message and exit(1), not raise a raw traceback."""
+    mock_open_ws.side_effect = Exception('403: permission denied')
+
+    monkeypatch.setattr(sys, 'argv', ['generate_pending_copy.py'])
+    with pytest.raises(SystemExit) as exc_info:
+        generate_pending_copy.main()
+    assert exc_info.value.code == 1

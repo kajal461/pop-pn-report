@@ -36,9 +36,22 @@ def main() -> None:
 
     print(f'Brief sheet: {BRIEF_SHEET_ID}')
 
-    worksheet, header_row = open_worksheet_with_header(KEY_PATH)
+    # Setup calls (sheet access, historical data load) happen once, before
+    # any row processing. A failure here means the whole run can't start —
+    # print a clear, actionable message and exit non-zero, instead of a
+    # raw traceback that's hard to diagnose from CI logs (e.g. the service
+    # account not having Editor access on the brief sheet yet).
+    try:
+        worksheet, header_row = open_worksheet_with_header(KEY_PATH)
+        pending = get_pending_briefs(KEY_PATH)
+        master_enriched = load_table('master_enriched')
+    except Exception as exc:
+        print(f'\nFATAL: could not start the batch run: {exc}')
+        print('Check that GOOGLE_CLOUD_KEY_PATH points to a valid service account, '
+              'that it has Editor access on the brief sheet, and BigQuery Data '
+              'Viewer/Job User access on the pn_report dataset.')
+        raise SystemExit(1)
 
-    pending = get_pending_briefs(KEY_PATH)
     print(f'Found {len(pending)} pending briefs')
 
     if len(pending) > args.max_rows:
@@ -46,7 +59,6 @@ def main() -> None:
               f'{len(pending) - args.max_rows} rows will be picked up next run')
         pending = pending[:args.max_rows]
 
-    master_enriched = load_table('master_enriched')
     historical_lookup = build_historical_lookup(master_enriched)
 
     processed, errored = 0, 0
