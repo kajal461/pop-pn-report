@@ -62,11 +62,24 @@ def main() -> None:
 
         print(f'  ✓ Row {brief["row_number"]} ({brief["bu"]}): {len(candidates)} candidates generated')
         if not args.dry_run:
-            write_suggestions(KEY_PATH, brief['row_number'], candidates, worksheet=worksheet, header_row=header_row)
+            try:
+                write_suggestions(KEY_PATH, brief['row_number'], candidates, worksheet=worksheet, header_row=header_row)
+            except Exception as exc:
+                print(f'  ✗ Row {brief["row_number"]} ({brief["bu"]}): failed to write suggestions: {exc}')
+                mark_error(KEY_PATH, brief['row_number'], f'write failed: {exc}', worksheet=worksheet, header_row=header_row)
+                errored += 1
+                continue
         processed += 1
 
     dry_run_note = ' (dry run — nothing written)' if args.dry_run else ''
     print(f'\nDone: {processed} processed, {errored} errored{dry_run_note}')
+
+    if not args.dry_run and errored > 0 and errored == len(pending):
+        # Every row failed — signal this clearly to CI (Task 11's GitHub
+        # Actions workflow) via a non-zero exit code, rather than reporting
+        # a misleadingly "successful" green run. Dry runs don't write
+        # anything back to the sheet, so they shouldn't fail CI either.
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':
