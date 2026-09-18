@@ -50,12 +50,14 @@ jobs:
           COPY_GEN_SHEET_ENV: test
           ANTHROPIC_GATEWAY_API_KEY: ${{ secrets.ANTHROPIC_GATEWAY_API_KEY }}
           FIREWORKS_GATEWAY_LITELLM_KEY: ${{ secrets.FIREWORKS_GATEWAY_LITELLM_KEY }}
+          MAX_ROWS_INPUT: ${{ github.event.inputs.max_rows }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
         run: |
           ARGS=""
-          if [ -n "${{ github.event.inputs.max_rows }}" ]; then
-            ARGS="$ARGS --max-rows ${{ github.event.inputs.max_rows }}"
+          if [ -n "$MAX_ROWS_INPUT" ]; then
+            ARGS="$ARGS --max-rows $MAX_ROWS_INPUT"
           fi
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
             ARGS="$ARGS --dry-run"
           fi
           python generate_pending_copy.py $ARGS
