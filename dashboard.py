@@ -584,6 +584,7 @@ page = st.sidebar.radio('Navigate', [
     '📡 Channel Intelligence',
     '🧪 Control Group Analysis',
     '📅 Day-Over-Day (DOD)',
+    '✨ Copy Generator',
 ])
 
 all_bus = sorted(master['bu'].dropna().unique().tolist()) if 'bu' in master.columns else []
@@ -4856,3 +4857,59 @@ elif page == '📅 Day-Over-Day (DOD)':
         '🔍 **Use the day filter** — click any specific date to drill into that day\'s campaign list and BU breakdown.',
         '🔄 **Data refreshes automatically** — GitHub Actions runs at 6:30am IST daily. No manual action needed.',
     ], box_type='success')
+
+# PAGE 12 — COPY GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == '✨ Copy Generator':
+    st.markdown("""
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <h1 style="margin:0;font-size:28px;font-weight:800">✨ Copy Generator</h1>
+    </div>
+    <p style="color:#64748b;font-size:13px;margin:4px 0 16px">
+        Enter a campaign brief and get 5 Magician-Jester copy candidates, each scored against historical performance.
+    </p>
+    """, unsafe_allow_html=True)
+
+    with st.form('copy_generator_form'):
+        col1, col2 = st.columns(2)
+        with col1:
+            bu_options = sorted(master['bu'].dropna().unique().tolist()) if 'bu' in master.columns else []
+            bu_input = st.selectbox('BU', bu_options)
+            product_input = st.text_input('Product')
+            price_input = st.text_input('Pricing')
+        with col2:
+            offer_input = st.text_input('Offer')
+            brand_input = st.text_input('Brand', value='POP')
+            campaign_type_input = st.text_input('Campaign Type')
+        segment_input = st.text_input('Target Segment (optional)')
+        submitted = st.form_submit_button('Generate candidates')
+
+    if submitted:
+        brief = {
+            'bu': bu_input, 'product': product_input, 'price': price_input,
+            'offer': offer_input, 'brand': brand_input,
+            'campaign_type': campaign_type_input, 'segment': segment_input,
+        }
+        with st.spinner('Generating candidates...'):
+            from src.copy_generator import generate_and_score
+            from src.copy_scorer import build_historical_lookup
+            historical_lookup = build_historical_lookup(master)
+            try:
+                candidates = generate_and_score(brief, historical_lookup)
+            except Exception as exc:
+                st.error(f'Generation failed: {exc}')
+                candidates = []
+
+        for i, cand in enumerate(candidates, start=1):
+            with st.container(border=True):
+                st.markdown(f"**Option {i} — {cand.get('tonality', 'Unclassified')}**")
+                if cand.get('self_check_flag'):
+                    st.warning(cand['self_check_flag'])
+                if cand.get('title_over_limit') or cand.get('body_over_limit'):
+                    st.warning('⚠️ Exceeds MoEngage title/body length limits')
+                st.markdown(f"*Insight: {cand.get('insight', '')}*")
+                st.markdown(f"**{cand.get('title', '')}**")
+                st.markdown(cand.get('body', ''))
+                ctr = cand.get('rule_based_avg_ctr')
+                ctr_display = f'{ctr:.2f}%' if ctr is not None else 'No history yet'
+                st.caption(f'📊 Rule-based historical CTR proxy: {ctr_display}')
