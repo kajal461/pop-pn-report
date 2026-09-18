@@ -40,6 +40,38 @@ def test_call_llm_fireworks_provider(mock_openai_cls):
     assert result == 'hello from kimi'
 
 
+@patch('src.llm_client.anthropic.Anthropic')
+def test_call_llm_anthropic_provider_wraps_sdk_exception(mock_anthropic_cls):
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = Exception('rate limited')
+    mock_anthropic_cls.return_value = mock_client
+
+    with pytest.raises(LLMError, match="LLM call to 'claude-sonnet-4-6' failed: rate limited"):
+        call_llm('claude-sonnet-4-6', 'sys', 'usr')
+
+
+@patch('src.llm_client.openai.OpenAI')
+def test_call_llm_fireworks_provider_calls_with_correct_kwargs_and_wraps_exception(mock_openai_cls):
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content='hello from kimi'))]
+    mock_client.chat.completions.create.return_value = mock_response
+    mock_openai_cls.return_value = mock_client
+
+    call_llm('kimi-k3', 'sys', 'usr')
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs['model'] == 'kimi-k3'
+    assert kwargs['messages'] == [
+        {'role': 'system', 'content': 'sys'},
+        {'role': 'user', 'content': 'usr'},
+    ]
+
+    mock_client.chat.completions.create.side_effect = Exception('gateway timeout')
+    with pytest.raises(LLMError, match="LLM call to 'kimi-k3' failed: gateway timeout"):
+        call_llm('kimi-k3', 'sys', 'usr')
+
+
 @patch('src.llm_client.call_llm')
 def test_call_llm_json_parses_plain_json(mock_call_llm):
     mock_call_llm.return_value = '{"a": 1, "b": "two"}'
