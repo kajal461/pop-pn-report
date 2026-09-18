@@ -1,3 +1,4 @@
+# scripts/inspect_brief_sheet.py
 """
 One-time reconnaissance script: prints the exact header row of the brief
 sheet so config.py's BRIEF_COL_* constants can be corrected if the guessed
