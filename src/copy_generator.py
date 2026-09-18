@@ -151,3 +151,18 @@ def validate_lengths(candidates: list) -> list:
         candidate['title_over_limit'] = len(candidate.get('title', '')) > ANDROID_TITLE_MAX_CHARS
         candidate['body_over_limit'] = len(candidate.get('body', '')) > ANDROID_BODY_MAX_CHARS
     return candidates
+
+
+def generate_and_score(brief: dict, historical_lookup, model: str = None) -> list:
+    """
+    Full pipeline for one brief: generate candidates, run the self-check
+    pass, validate lengths, and score with the rule-based scorer. This is
+    the single function called by the sheet batch job, the dashboard page,
+    and (in Plan 3) the Cloud Run entry point.
+    """
+    from src.copy_scorer import score_candidates  # local import avoids a circular import
+
+    candidates = generate_with_self_check(brief, model=model)
+    validate_lengths(candidates)
+    score_candidates(candidates, bu=brief.get('bu', ''), historical_lookup=historical_lookup)
+    return candidates

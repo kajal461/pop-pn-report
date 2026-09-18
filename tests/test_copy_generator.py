@@ -173,3 +173,25 @@ def test_validate_lengths_passes_within_limit():
     validate_lengths(candidates)
     assert candidates[0]['title_over_limit'] is False
     assert candidates[0]['body_over_limit'] is False
+
+
+import pandas as pd
+from src.copy_generator import generate_and_score
+
+
+@patch('src.copy_generator.generate_with_self_check')
+def test_generate_and_score_ties_everything_together(mock_generate):
+    mock_generate.return_value = [
+        {'insight': 'a', 'title': 'Win ₹50 POPcoins today', 'body': 'Pay with POP UPI',
+         'self_check_passed': True, 'self_check_flag': None},
+    ]
+    empty_lookup = pd.DataFrame(columns=['bu', 'tonality', 'avg_ctr', 'campaign_count'])
+    result = generate_and_score(SAMPLE_BRIEF, historical_lookup=empty_lookup)
+
+    assert len(result) == 1
+    # Has fields from self-check...
+    assert result[0]['self_check_passed'] is True
+    # ...from length validation...
+    assert 'title_over_limit' in result[0]
+    # ...and from rule-based scoring
+    assert result[0]['tonality'] == 'DO: Smart — Value-aware'
