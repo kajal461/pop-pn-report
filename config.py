@@ -2,6 +2,20 @@
 import os
 from datetime import date
 
+from dotenv import load_dotenv
+
+# Load .env into os.environ before any os.environ.get(...) calls below run.
+# Without this, config.py's env-driven constants (Copy Generator gateway
+# keys, sheet IDs, etc.) silently default to empty/blank whenever this
+# module is imported before src/bq_loader.py (the only other place that
+# previously called load_dotenv()) — e.g. every Copy Generator script
+# (generate_pending_copy.py, scripts/eval_llm_models.py, retrain_models.py)
+# imports `config` before `src.bq_loader`, so those env vars were never
+# actually loaded. Calling load_dotenv() here makes config.py self-
+# sufficient regardless of import order. Safe to call multiple times
+# (python-dotenv no-ops if already loaded).
+load_dotenv()
+
 # ── Google Sheets column names (MoEngage export) ────────────────────────────
 COL_CAMPAIGN_ID      = 'Campaign ID'
 COL_VARIATION        = 'Variation'
@@ -305,7 +319,12 @@ LLM_MODEL_REGISTRY = {
 }
 
 ANTHROPIC_GATEWAY_BASE_URL = os.environ.get(
-    'ANTHROPIC_GATEWAY_BASE_URL', 'https://llm-gateway.razorpay.com/v1'
+    # NOTE: no trailing /v1 — the anthropic Python SDK's own default
+    # base_url ('https://api.anthropic.com') doesn't include /v1 either;
+    # it appends '/v1/messages' internally. Adding /v1 here caused a
+    # double '/v1/v1/messages' path and a 404 on every real call (caught
+    # 2026-09-18 during live verification).
+    'ANTHROPIC_GATEWAY_BASE_URL', 'https://llm-gateway.razorpay.com'
 )
 ANTHROPIC_GATEWAY_API_KEY = os.environ.get('ANTHROPIC_GATEWAY_API_KEY', '')
 
