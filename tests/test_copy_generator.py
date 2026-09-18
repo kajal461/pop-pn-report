@@ -72,6 +72,27 @@ def test_self_check_candidate_fails(mock_call):
 
 
 @patch('src.copy_generator.call_llm_json')
+def test_self_check_candidate_handles_stringified_false(mock_call):
+    mock_call.return_value = {'insight_holds': 'false', 'reason': 'stringified boolean'}
+    candidate = {'insight': 'x', 'title': 'Some line', 'body': ''}
+    assert self_check_candidate(candidate, model='claude-sonnet-4-6') is False
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_self_check_candidate_handles_stringified_true(mock_call):
+    mock_call.return_value = {'insight_holds': 'true', 'reason': 'stringified boolean'}
+    candidate = {'insight': 'x', 'title': 'Some line', 'body': ''}
+    assert self_check_candidate(candidate, model='claude-sonnet-4-6') is True
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_self_check_candidate_defaults_false_on_non_dict_response(mock_call):
+    mock_call.return_value = ['unexpected', 'array', 'response']
+    candidate = {'insight': 'x', 'title': 'Some line', 'body': ''}
+    assert self_check_candidate(candidate, model='claude-sonnet-4-6') is False
+
+
+@patch('src.copy_generator.call_llm_json')
 def test_regenerate_candidate_avoids_existing_insights(mock_call):
     mock_call.return_value = [{'insight': 'new angle', 'title': 'T', 'body': 'B'}]
     result = regenerate_candidate(SAMPLE_BRIEF, existing_insights=['angle a', 'angle b'], model='claude-sonnet-4-6')
@@ -111,3 +132,27 @@ def test_generate_with_self_check_accepts_regenerated_replacement(mock_generate,
     assert result[0]['title'] == 'T2'
     assert result[0]['self_check_passed'] is True
     assert result[0].get('self_check_flag') is None
+
+
+@patch('src.copy_generator.self_check_candidate')
+@patch('src.copy_generator.generate_candidates')
+def test_generate_with_self_check_updates_existing_insights_across_batch(mock_generate, mock_self_check):
+    mock_generate.return_value = [
+        {'insight': 'angle a', 'title': 'T1', 'body': 'B1'},
+        {'insight': 'angle b', 'title': 'T2', 'body': 'B2'},
+    ]
+    # Both candidates fail their first self-check; both regenerations pass
+    mock_self_check.side_effect = [False, True, False, True]
+
+    with patch('src.copy_generator.regenerate_candidate') as mock_regen:
+        mock_regen.side_effect = [
+            {'insight': 'angle c', 'title': 'T1b', 'body': 'B1b'},
+            {'insight': 'angle d', 'title': 'T2b', 'body': 'B2b'},
+        ]
+        generate_with_self_check(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+
+    # Second regenerate_candidate call's existing_insights arg should include
+    # the FIRST regeneration's insight ('angle c'), not just the original batch's
+    second_call_args = mock_regen.call_args_list[1]
+    existing_insights_arg = second_call_args[0][1]  # regenerate_candidate(brief, existing_insights, model=...)
+    assert 'angle c' in existing_insights_arg

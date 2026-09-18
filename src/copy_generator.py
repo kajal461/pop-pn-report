@@ -63,7 +63,9 @@ def self_check_candidate(candidate: dict, model: str = None) -> bool:
     """
     Apply the "strip the joke" test: does the insight still hold up as true
     and interesting if the wit/brevity trick is removed? Returns True if it
-    passes (the Magician actually showed up), False otherwise.
+    passes (the Magician actually showed up), False otherwise. Fails safe
+    (returns False) on any malformed or unexpected response shape — never
+    lets an ambiguous response silently pass a weak candidate.
     """
     model = model or COPY_GEN_MODEL
     system = 'You are a strict editor applying POP\'s Magician-Jester brand test.'
@@ -75,7 +77,12 @@ def self_check_candidate(candidate: dict, model: str = None) -> bool:
         '{"insight_holds": true or false, "reason": "..."}'
     )
     response = call_llm_json(model, system, user)
-    return bool(response.get('insight_holds', False))
+    if not isinstance(response, dict):
+        return False
+    value = response.get('insight_holds', False)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() == 'true'
 
 
 def regenerate_candidate(brief: dict, existing_insights: list, model: str = None) -> dict:
@@ -95,12 +102,20 @@ def regenerate_candidate(brief: dict, existing_insights: list, model: str = None
     return candidate
 
 
+def _finalize_candidate(candidate: dict, self_check_passed: bool, flag: str = None) -> dict:
+    candidate = dict(candidate)
+    candidate['self_check_passed'] = self_check_passed
+    candidate['self_check_flag'] = flag
+    return candidate
+
+
 def generate_with_self_check(brief: dict, model: str = None) -> list:
     """
     Generate candidates, then run the automated self-check on each. A
     candidate that fails gets one regeneration attempt; if the replacement
     still fails, it's kept but flagged rather than dropped (spec Section 5.2
-    / 9 — never fail silently).
+    / 9 — never fail silently). Every returned candidate has both
+    'self_check_passed' and 'self_check_flag' keys set consistently.
     """
     model = model or COPY_GEN_MODEL
     candidates = generate_candidates(brief, model=model)
@@ -108,19 +123,18 @@ def generate_with_self_check(brief: dict, model: str = None) -> list:
 
     checked = []
     for candidate in candidates:
-        passed = self_check_candidate(candidate, model=model)
-        if not passed:
-            replacement = regenerate_candidate(brief, existing_insights, model=model)
-            if self_check_candidate(replacement, model=model):
-                replacement['self_check_passed'] = True
-                checked.append(replacement)
-                continue
-            candidate['self_check_passed'] = False
-            candidate['self_check_flag'] = '⚠️ insight may be thin'
-            checked.append(candidate)
+        if self_check_candidate(candidate, model=model):
+            checked.append(_finalize_candidate(candidate, self_check_passed=True))
             continue
-        candidate['self_check_passed'] = True
-        candidate['self_check_flag'] = None
-        checked.append(candidate)
+
+        replacement = regenerate_candidate(brief, existing_insights, model=model)
+        existing_insights.append(replacement['insight'])
+        if self_check_candidate(replacement, model=model):
+            checked.append(_finalize_candidate(replacement, self_check_passed=True))
+            continue
+
+        checked.append(_finalize_candidate(
+            candidate, self_check_passed=False, flag='⚠️ insight may be thin'
+        ))
 
     return checked
