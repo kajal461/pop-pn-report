@@ -1,0 +1,65 @@
+name: Copy Generator Daily Batch
+
+# Scheduled: runs every day at 8:00am IST (02:30 UTC) to generate PN copy
+# suggestions for any brief rows marked 'Pending' on the brief sheet.
+# Currently points at the TEST brief sheet (config.TEST_SHEET_ID) via
+# COPY_GEN_SHEET_ENV=test until the team validates suggestion quality —
+# see docs/superpowers/specs/2026-09-08-pn-copy-generator-design.md Section 4.
+
+on:
+  schedule:
+    - cron: '30 2 * * *'   # UTC 02:30 daily = IST 08:00 daily
+  workflow_dispatch:
+    inputs:
+      max_rows:
+        description: 'Override max rows processed this run (leave blank for default)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Generate but do not write back to the sheet (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  generate-pending-copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCP service account credentials
+        run: |
+          mkdir -p credentials
+          echo '${{ secrets.GOOGLE_CLOUD_KEY_JSON }}' > credentials/service_account.json
+
+      - name: Run copy generator batch
+        env:
+          GOOGLE_CLOUD_KEY_PATH: credentials/service_account.json
+          GCP_PROJECT_ID: copies-qc
+          BQ_DATASET: pn_report
+          COPY_GEN_SHEET_ENV: test
+          ANTHROPIC_GATEWAY_API_KEY: ${{ secrets.ANTHROPIC_GATEWAY_API_KEY }}
+          FIREWORKS_GATEWAY_LITELLM_KEY: ${{ secrets.FIREWORKS_GATEWAY_LITELLM_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.max_rows }}" ]; then
+            ARGS="$ARGS --max-rows ${{ github.event.inputs.max_rows }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python generate_pending_copy.py $ARGS
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f credentials/service_account.json
