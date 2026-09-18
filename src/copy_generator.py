@@ -56,7 +56,12 @@ def generate_candidates(brief: dict, model: str = None) -> list:
     """
     model = model or COPY_GEN_MODEL
     user_prompt = build_user_prompt(brief)
-    response = call_llm_json(model, MAGICIAN_JESTER_SYSTEM_PROMPT, user_prompt)
+    # max_tokens=4096: confirmed live 2026-09-18 that claude-sonnet-4-6 uses
+    # extended thinking on this creative task (~1800 thinking tokens
+    # observed for a 5-candidate batch) — the previous default (1500) was
+    # consumed entirely by thinking, truncating the response before any
+    # actual text output, which crashed downstream JSON parsing.
+    response = call_llm_json(model, MAGICIAN_JESTER_SYSTEM_PROMPT, user_prompt, max_tokens=4096)
 
     if not isinstance(response, list):
         raise LLMError(f'expected a JSON array of candidates, got: {type(response)}')
@@ -103,7 +108,11 @@ def regenerate_candidate(brief: dict, existing_insights: list, model: str = None
     user = build_user_prompt(brief, count=1) + (
         f'\n\nDo NOT reuse any of these already-used insights/angles:\n{existing_list}'
     )
-    response = call_llm_json(model, MAGICIAN_JESTER_SYSTEM_PROMPT, user)
+    # max_tokens=2048: same creative-task/extended-thinking risk as
+    # generate_candidates (see its comment), scaled down since this asks
+    # for only 1 candidate instead of 5, but still needs headroom beyond
+    # the plain default.
+    response = call_llm_json(model, MAGICIAN_JESTER_SYSTEM_PROMPT, user, max_tokens=2048)
     # A single-candidate request may come back as a list of 1 or a bare object
     candidate = response[0] if isinstance(response, list) else response
     _validate_candidate(candidate)

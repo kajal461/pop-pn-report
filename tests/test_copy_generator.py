@@ -41,6 +41,18 @@ def test_generate_candidates_returns_parsed_list(mock_call):
 
 
 @patch('src.copy_generator.call_llm_json')
+def test_generate_candidates_requests_enough_tokens_for_extended_thinking(mock_call):
+    # Real bug caught 2026-09-18 live: claude-sonnet-4-6 uses extended
+    # thinking on this task and the old default (1500) got consumed
+    # entirely by thinking, truncating the response before any text
+    # output. Must request enough headroom.
+    mock_call.return_value = [{'insight': 'a', 'title': 'T', 'body': 'B'}]
+    generate_candidates(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+    _, kwargs = mock_call.call_args
+    assert kwargs.get('max_tokens', 0) >= 4096
+
+
+@patch('src.copy_generator.call_llm_json')
 def test_generate_candidates_raises_on_missing_keys(mock_call):
     mock_call.return_value = [{'insight': 'a', 'title': 'Title A'}]  # missing 'body'
     with pytest.raises(LLMError, match='missing required key'):
@@ -113,6 +125,7 @@ def test_regenerate_candidate_avoids_existing_insights(mock_call):
     assert result['insight'] == 'new angle'
     _, kwargs = mock_call.call_args
     assert 'angle a' in kwargs.get('user', mock_call.call_args[0][2] if len(mock_call.call_args[0]) > 2 else '')
+    assert kwargs.get('max_tokens', 0) >= 2048
 
 
 @patch('src.copy_generator.call_llm_json')

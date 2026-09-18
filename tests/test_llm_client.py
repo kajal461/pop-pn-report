@@ -15,7 +15,7 @@ def test_call_llm_unknown_model_raises():
 def test_call_llm_anthropic_provider(mock_anthropic_cls):
     mock_client = MagicMock()
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(text='hello from claude')]
+    mock_response.content = [MagicMock(type='text', text='hello from claude')]
     mock_client.messages.create.return_value = mock_response
     mock_anthropic_cls.return_value = mock_client
 
@@ -25,6 +25,37 @@ def test_call_llm_anthropic_provider(mock_anthropic_cls):
     _, kwargs = mock_client.messages.create.call_args
     assert kwargs['model'] == 'claude-sonnet-4-6'
     assert kwargs['system'] == 'sys'
+
+
+@patch('src.llm_client.anthropic.Anthropic')
+def test_call_llm_anthropic_skips_thinking_blocks(mock_anthropic_cls):
+    # Real bug caught 2026-09-18: claude-sonnet-4-6 returns an extended-
+    # thinking block (type='thinking', text=None) BEFORE the actual text
+    # response. Grabbing content[0] blindly crashed on every real call.
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [
+        MagicMock(type='thinking', text=None),
+        MagicMock(type='text', text='the real answer'),
+    ]
+    mock_client.messages.create.return_value = mock_response
+    mock_anthropic_cls.return_value = mock_client
+
+    result = call_llm('claude-sonnet-4-6', 'sys', 'usr')
+
+    assert result == 'the real answer'
+
+
+@patch('src.llm_client.anthropic.Anthropic')
+def test_call_llm_anthropic_raises_clear_error_when_no_text_block(mock_anthropic_cls):
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(type='thinking', text=None)]
+    mock_client.messages.create.return_value = mock_response
+    mock_anthropic_cls.return_value = mock_client
+
+    with pytest.raises(LLMError, match='No text content block'):
+        call_llm('claude-sonnet-4-6', 'sys', 'usr')
 
 
 @patch('src.llm_client.openai.OpenAI')

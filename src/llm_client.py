@@ -38,7 +38,22 @@ def _call_anthropic(api_model: str, system: str, user: str, max_tokens: int) -> 
         system=system,
         messages=[{'role': 'user', 'content': user}],
     )
-    return response.content[0].text
+    # Some Claude models (confirmed live: claude-sonnet-4-6) return extended
+    # thinking output as an additional content block BEFORE the actual text
+    # response — response.content[0] is a block with type='thinking' and
+    # text=None, not the real answer. Grabbing content[0] blindly crashed
+    # with "'NoneType' object has no attribute 'strip'" on every single
+    # call to the default model (caught 2026-09-18 during live
+    # verification). Concatenate every 'text'-type block instead, ignoring
+    # 'thinking' blocks, so this works whether or not a given model/request
+    # returns thinking output.
+    text_blocks = [block.text for block in response.content if block.type == 'text']
+    if not text_blocks:
+        raise LLMError(
+            f'No text content block in response from {api_model!r} — got block types: '
+            f'{[block.type for block in response.content]}'
+        )
+    return ''.join(text_blocks)
 
 
 def _call_fireworks(api_model: str, system: str, user: str, max_tokens: int) -> str:
