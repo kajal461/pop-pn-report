@@ -8,6 +8,7 @@ from config import (
     MAGICIAN_JESTER_SYSTEM_PROMPT, COPY_GEN_MODEL, COPY_GEN_CANDIDATE_COUNT,
     ANDROID_TITLE_MAX_CHARS, ANDROID_BODY_MAX_CHARS,
 )
+from src.copy_scorer import score_candidates
 from src.llm_client import call_llm_json, LLMError
 
 REQUIRED_CANDIDATE_KEYS = ('insight', 'title', 'body')
@@ -36,9 +37,15 @@ Return ONLY a JSON array of exactly {count} objects, each with keys \
 
 
 def _validate_candidate(candidate: dict) -> None:
+    if not isinstance(candidate, dict):
+        raise LLMError(f'Candidate is not a JSON object: {candidate!r}')
     for key in REQUIRED_CANDIDATE_KEYS:
         if key not in candidate:
             raise LLMError(f'Candidate missing required key {key!r}: {candidate!r}')
+        if not isinstance(candidate[key], str):
+            raise LLMError(
+                f'Candidate key {key!r} must be a string, got {type(candidate[key]).__name__}: {candidate!r}'
+            )
 
 
 def generate_candidates(brief: dict, model: str = None) -> list:
@@ -159,9 +166,13 @@ def generate_and_score(brief: dict, historical_lookup, model: str = None) -> lis
     pass, validate lengths, and score with the rule-based scorer. This is
     the single function called by the sheet batch job, the dashboard page,
     and (in Plan 3) the Cloud Run entry point.
-    """
-    from src.copy_scorer import score_candidates  # local import avoids a circular import
 
+    Raises LLMError if generation/self-check/regeneration fails at any
+    point (malformed LLM output, gateway errors, etc.) — this is the only
+    exception type callers need to handle; validation failures on
+    malformed candidate content are also normalized to LLMError by
+    _validate_candidate before reaching later pipeline stages.
+    """
     candidates = generate_with_self_check(brief, model=model)
     validate_lengths(candidates)
     score_candidates(candidates, bu=brief.get('bu', ''), historical_lookup=historical_lookup)

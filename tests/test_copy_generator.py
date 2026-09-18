@@ -54,6 +54,20 @@ def test_generate_candidates_raises_on_non_list_response(mock_call):
         generate_candidates(SAMPLE_BRIEF, model='claude-sonnet-4-6')
 
 
+@patch('src.copy_generator.call_llm_json')
+def test_generate_candidates_raises_on_null_title(mock_call):
+    mock_call.return_value = [{'insight': 'a', 'title': None, 'body': 'Body A'}]
+    with pytest.raises(LLMError, match='must be a string'):
+        generate_candidates(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_generate_candidates_raises_on_non_dict_candidate_item(mock_call):
+    mock_call.return_value = ['not a dict', {'insight': 'a', 'title': 'T', 'body': 'B'}]
+    with pytest.raises(LLMError, match='not a JSON object'):
+        generate_candidates(SAMPLE_BRIEF, model='claude-sonnet-4-6')
+
+
 from src.copy_generator import self_check_candidate, regenerate_candidate, generate_with_self_check
 
 
@@ -99,6 +113,13 @@ def test_regenerate_candidate_avoids_existing_insights(mock_call):
     assert result['insight'] == 'new angle'
     _, kwargs = mock_call.call_args
     assert 'angle a' in kwargs.get('user', mock_call.call_args[0][2] if len(mock_call.call_args[0]) > 2 else '')
+
+
+@patch('src.copy_generator.call_llm_json')
+def test_regenerate_candidate_raises_on_null_body(mock_call):
+    mock_call.return_value = [{'insight': 'x', 'title': 'T', 'body': None}]
+    with pytest.raises(LLMError, match='must be a string'):
+        regenerate_candidate(SAMPLE_BRIEF, existing_insights=['a'], model='claude-sonnet-4-6')
 
 
 @patch('src.copy_generator.self_check_candidate')
