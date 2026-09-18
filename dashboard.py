@@ -4874,6 +4874,8 @@ elif page == '✨ Copy Generator':
         col1, col2 = st.columns(2)
         with col1:
             bu_options = sorted(master['bu'].dropna().unique().tolist()) if 'bu' in master.columns else []
+            if not bu_options:
+                st.warning('No BU data available')
             bu_input = st.selectbox('BU', bu_options)
             product_input = st.text_input('Product')
             price_input = st.text_input('Pricing')
@@ -4886,15 +4888,15 @@ elif page == '✨ Copy Generator':
 
     if submitted:
         brief = {
-            'bu': bu_input, 'product': product_input, 'price': price_input,
+            'bu': bu_input or '', 'product': product_input, 'price': price_input,
             'offer': offer_input, 'brand': brand_input,
             'campaign_type': campaign_type_input, 'segment': segment_input,
         }
+        from src.copy_generator import generate_and_score
+        from src.copy_scorer import build_historical_lookup
         with st.spinner('Generating candidates...'):
-            from src.copy_generator import generate_and_score
-            from src.copy_scorer import build_historical_lookup
-            historical_lookup = build_historical_lookup(master)
             try:
+                historical_lookup = build_historical_lookup(master)
                 candidates = generate_and_score(brief, historical_lookup)
             except Exception as exc:
                 st.error(f'Generation failed: {exc}')
