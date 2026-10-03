@@ -143,6 +143,53 @@ def _write_table(
     print(f'  -> {table_name}: {len(df_clean)} rows written -> {table_ref} (recreated fresh - resets 60-day expiration clock)')
 
 
+def _apply_max_conversions_before_dedup(combined: pd.DataFrame, dup_keys: list) -> pd.DataFrame:
+    """
+    Before deduping duplicate (Campaign_ID, Variation) rows, replace each
+    row's primary_conversions with the MAX seen across all duplicates of
+    that campaign — never trust "latest pull" alone for this one column.
+
+    Conversions are not final at send time — MoEngage keeps attributing
+    them for days/weeks afterward, so a re-pull shortly after a campaign
+    sends will under-report versus a re-pull made later. Plain "new data
+    wins" dedup can therefore REGRESS a conversion count that was already
+    captured correctly (e.g. a mature CSV-sourced number overwritten by a
+    premature API re-pull). Caught 2026-10-02: every day from 2026-08-29
+    onward — the exact day an API-pull pipeline took over from CSV exports
+    — showed conversions collapse to ~0, confirmed via day-by-day
+    conv_rate dropping from a steady ~0.006-0.008% to 0.0000% overnight
+    with no plausible real-world cause. max() is safe here specifically
+    because conversions only ever accumulate forward in time.
+    """
+    if not dup_keys or 'primary_conversions' not in combined.columns:
+        return combined
+    combined = combined.copy()
+    combined['primary_conversions'] = pd.to_numeric(combined['primary_conversions'], errors='coerce').fillna(0)
+    combined['primary_conversions'] = combined.groupby(dup_keys)['primary_conversions'].transform('max')
+    return combined
+
+
+def _recompute_conversion_rates(combined: pd.DataFrame) -> pd.DataFrame:
+    """
+    Recompute click_to_convert_rate / end_to_end_funnel_rate from whatever
+    primary_conversions ends up after dedup (which _apply_max_conversions_
+    before_dedup may have just corrected upward) — leaving these stale
+    would show a corrected conversions count next to inconsistent rates
+    computed against the old, wrong number.
+    """
+    clicks_col = 'All_Platform_Clicks' if 'All_Platform_Clicks' in combined.columns else None
+    sent_col   = 'All_Platform_Sent'   if 'All_Platform_Sent'   in combined.columns else None
+    if 'primary_conversions' not in combined.columns or not clicks_col or not sent_col:
+        return combined
+    combined = combined.copy()
+    conv   = pd.to_numeric(combined['primary_conversions'], errors='coerce').fillna(0)
+    clicks = pd.to_numeric(combined[clicks_col], errors='coerce').fillna(0)
+    sent   = pd.to_numeric(combined[sent_col], errors='coerce').fillna(0)
+    combined['click_to_convert_rate']  = (conv / clicks.where(clicks != 0)).fillna(0.0)
+    combined['end_to_end_funnel_rate'] = (conv / sent.where(sent != 0)).fillna(0.0)
+    return combined
+
+
 def upsert_master_enriched(
     project_id: str,
     key_path: str,
@@ -213,6 +260,11 @@ def upsert_master_enriched(
 
     n_before = len(combined)
 
+    # See _apply_max_conversions_before_dedup's docstring: conversions
+    # need special handling before the "new data wins" dedup below, since
+    # that rule can otherwise regress an already-mature conversion count.
+    combined = _apply_max_conversions_before_dedup(combined, dup_keys)
+
     # Deduplicate: keep first occurrence (new data is on top, so new wins)
     if dup_keys and all(k in combined.columns for k in dup_keys):
         combined = combined.drop_duplicates(subset=dup_keys, keep='first')
@@ -222,6 +274,8 @@ def upsert_master_enriched(
     else:
         combined = combined.drop_duplicates(keep='first')
         print(f'  Combined: {len(combined):,} rows (no primary key — deduped by all columns)')
+
+    combined = _recompute_conversion_rates(combined)
 
     # Cross-reference dod_daily's day-level history to catch recurring/
     # automated campaigns. master_enriched dedupes to one row per
