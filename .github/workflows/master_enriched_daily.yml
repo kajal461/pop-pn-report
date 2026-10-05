@@ -23,12 +23,21 @@ name: Master Enriched Daily Update
 #            etc.) meaningfully more time to land before that campaign's
 #            last chance to be re-measured.
 # Manual:    trigger from GitHub UI with a custom day count to backfill a
-#            gap (e.g. after this automation was paused, or to recover
-#            from a missed run)
+#            small gap (e.g. after this automation was paused), or an
+#            explicit date_from/date_to range for a larger backfill/repair.
 #
-# To backfill a larger gap (e.g. 45 days):
+# MoEngage's Campaign Stats API rejects overly wide ranges in one call
+# (confirmed 2026-10-05: 38 days -> 400 Bad Request; 14 days is known-safe
+# from daily production use). For anything wider than ~2 weeks, chunk it
+# into multiple runs with explicit date_from/date_to rather than one large
+# `days` value - `days` alone can't target an arbitrary past window
+# anyway, since it's always computed relative to today.
+#
+# To backfill/repair a specific range (e.g. three ~2-week chunks covering
+# 2026-08-29 -> today):
 #   GitHub → Actions → Master Enriched Daily Update → Run workflow
-#   days: 45
+#   date_from: 2026-08-29   date_to: 2026-09-11
+#   (repeat with the next ~14-day chunk, and so on)
 
 on:
   schedule:
@@ -36,7 +45,15 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: 'Number of days to pull from API (leave blank for default 14)'
+        description: 'Number of days to pull from API (leave blank for default 14). Ignored if date_from/date_to are set.'
+        required: false
+        default: ''
+      date_from:
+        description: 'Explicit start date YYYY-MM-DD (used with date_to) for a targeted backfill/repair. Keep ranges to ~14 days or less per run.'
+        required: false
+        default: ''
+      date_to:
+        description: 'Explicit end date YYYY-MM-DD (used with date_from).'
         required: false
         default: ''
 
@@ -71,10 +88,17 @@ jobs:
           GOOGLE_CLOUD_KEY_PATH: credentials/service_account.json
           BQ_DATASET: pn_report
         run: |
-          DAYS="${{ github.event.inputs.days }}"
-          if [ -z "$DAYS" ]; then DAYS=14; fi
-          echo "Pulling last $DAYS days into master_enriched"
-          python run_report.py --api --days "$DAYS" --target master_enriched
+          DATE_FROM="${{ github.event.inputs.date_from }}"
+          DATE_TO="${{ github.event.inputs.date_to }}"
+          if [ -n "$DATE_FROM" ] && [ -n "$DATE_TO" ]; then
+            echo "Pulling explicit range $DATE_FROM -> $DATE_TO into master_enriched"
+            python run_report.py --api --date-from "$DATE_FROM" --date-to "$DATE_TO" --target master_enriched
+          else
+            DAYS="${{ github.event.inputs.days }}"
+            if [ -z "$DAYS" ]; then DAYS=14; fi
+            echo "Pulling last $DAYS days into master_enriched"
+            python run_report.py --api --days "$DAYS" --target master_enriched
+          fi
 
       - name: Clean up credentials
         if: always()

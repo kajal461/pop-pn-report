@@ -51,6 +51,14 @@ def main() -> None:
     parser.add_argument('--date', default=None,
                         help='Pull a single specific date from API: "yesterday" or "YYYY-MM-DD". '
                              'Used with --api --target dod_daily. Overrides --days.')
+    parser.add_argument('--date-from', default=None,
+                        help='Explicit start date YYYY-MM-DD for --api pulls (used with --date-to). '
+                             'Overrides --days and --date. MoEngage\'s Campaign Stats API rejects '
+                             'overly wide ranges in one call (confirmed 2026-10-05: 38 days -> 400 '
+                             'Bad Request, 14 days is known-safe) - chunk wide backfills into '
+                             'multiple --date-from/--date-to calls rather than one large --days N.')
+    parser.add_argument('--date-to', default=None,
+                        help='Explicit end date YYYY-MM-DD for --api pulls (used with --date-from).')
     parser.add_argument('--target', default='master_enriched',
                         choices=['master_enriched', 'dod_daily'],
                         help='BigQuery destination table (default: master_enriched). '
@@ -75,7 +83,15 @@ def main() -> None:
             )
         from src.loader import load_from_moengage_api, load_last_n_days_from_api
 
-        if args.date:
+        if args.date_from and args.date_to:
+            # Explicit range pull - for backfills/repairs. See --date-from's
+            # help text: the API itself rejects overly wide single-call
+            # ranges, so a large backfill should be issued as several of
+            # these rather than one big --days N.
+            print(f'Pulling explicit date range from MoEngage API: {args.date_from} -> {args.date_to}')
+            raw_df = load_from_moengage_api(app_id, secret_key, args.date_from, args.date_to, data_center)
+            print(f'   -> {len(raw_df)} campaigns loaded from MoEngage API ({args.date_from} -> {args.date_to})')
+        elif args.date:
             # Single-day pull for DOD: --date yesterday or --date 2026-07-07
             if args.date == 'yesterday':
                 pull_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
