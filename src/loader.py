@@ -107,6 +107,9 @@ def _parse_campaigns_from_response(data: dict) -> list:
     if not raw_data or not isinstance(raw_data, dict):
         return []
 
+    import os
+    _debug_left = 3 if os.getenv('DEBUG_DUMP_CGS') else 0
+
     campaigns = []
     for campaign_id, items in raw_data.items():
         if isinstance(items, dict):
@@ -130,6 +133,10 @@ def _parse_campaigns_from_response(data: dict) -> list:
             continue
 
         ctr = (clicks / sent * 100) if sent > 0 else 0.0
+
+        if _debug_left > 0 and cgs:
+            print(f'  [DEBUG_DUMP_CGS] campaign_id={campaign_id} conversion_goal_stats={cgs!r}')
+            _debug_left -= 1
 
         # Sum conversions across all goals — field is 'total' (not 'conversions')
         total_conv = sum(

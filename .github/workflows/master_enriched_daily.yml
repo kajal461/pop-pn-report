@@ -56,6 +56,10 @@ on:
         description: 'Explicit end date YYYY-MM-DD (used with date_from).'
         required: false
         default: ''
+      debug_dump_cgs:
+        description: 'Set to "1" to print the raw conversion_goal_stats dict for the first 3 campaigns that have any - diagnostic only, no effect on the actual pull/write.'
+        required: false
+        default: ''
 
 jobs:
   update-master-enriched:
@@ -87,6 +91,7 @@ jobs:
           GCP_PROJECT_ID: copies-qc
           GOOGLE_CLOUD_KEY_PATH: credentials/service_account.json
           BQ_DATASET: pn_report
+          DEBUG_DUMP_CGS: ${{ github.event.inputs.debug_dump_cgs }}
         run: |
           DATE_FROM="${{ github.event.inputs.date_from }}"
           DATE_TO="${{ github.event.inputs.date_to }}"
