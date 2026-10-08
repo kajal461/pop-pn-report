@@ -7,6 +7,7 @@ from src.loader import (
     load_from_csv, load_lookup_from_csv, load_from_sheets,
     enrich_campaign_metadata, load_from_moengage_api, fetch_campaign_metadata,
     filter_flow_journey_campaigns, find_recurring_campaign_ids,
+    _extract_goal_events, _parse_campaigns_from_response, _to_dataframe,
 )
 
 
@@ -652,3 +653,92 @@ def test_missing_columns_returns_empty_set_without_crashing():
 
 def test_empty_dataframe_returns_empty_set():
     assert find_recurring_campaign_ids(pd.DataFrame({'Campaign_ID': [], 'sent_date': []})) == set()
+
+
+# ── _extract_goal_events / Stats API conversion attribution ────────────────
+# Caught 2026-10-06: every campaign pulled via the API (used exclusively
+# since 2026-08-29) had its real conversion count silently zeroed by
+# add_bu_aware_conversions, because 'Conversion Goal N Event' was never
+# populated from the API response - only campaigns tagged bu='Unknown'
+# (which skips event-matching entirely) kept nonzero conversions. Root
+# cause: conversion_goal_stats IS keyed by the real event name (confirmed
+# live via a DEBUG_DUMP_CGS dump), the old code just discarded the keys
+# via cgs.values() and summed blindly into one bucket.
+
+def test_extract_goal_events_maps_event_name_to_correct_slot():
+    cgs = {
+        'UPI_TRANSACTION_STATUS': {'total': 5, 'unique': 5, 'goal_name': 'Goal 1'},
+        'PAGE_VIEWED_SHOP':       {'total': 2, 'unique': 2, 'goal_name': 'Goal 2'},
+    }
+    result = _extract_goal_events(cgs)
+    assert result == {1: ('UPI_TRANSACTION_STATUS', 5.0), 2: ('PAGE_VIEWED_SHOP', 2.0)}
+
+
+def test_extract_goal_events_handles_goal_with_no_conversions_that_day():
+    """Confirmed live: a goal that converted nothing that day only carries
+    'goal_name' in its dict - no 'total'/'unique' keys at all."""
+    cgs = {'UPI_TRANSACTION_STATUS': {'goal_name': 'Goal 1'}}
+    result = _extract_goal_events(cgs)
+    assert result == {1: ('UPI_TRANSACTION_STATUS', 0.0)}
+
+
+def test_extract_goal_events_ignores_entries_without_a_parseable_goal_name():
+    cgs = {
+        'SOME_EVENT': {'total': 5},               # no goal_name at all
+        'OTHER_EVENT': {'total': 3, 'goal_name': ''},
+        'NOT_A_DICT': 'garbage',
+    }
+    assert _extract_goal_events(cgs) == {}
+
+
+def test_extract_goal_events_empty_input():
+    assert _extract_goal_events({}) == {}
+
+
+def _stats_response_for_one_campaign(cgs, sent=1000, click=50):
+    return {
+        'total_campaigns': 1,
+        'data': {
+            'c1': [{'platforms': {'ALL_PLATFORMS': {'locales': {'all_locale': {
+                'variations': {'all_variations': {
+                    'performance_stats': {'sent': sent, 'click': click, 'impression': sent},
+                    'conversion_goal_stats': cgs,
+                }}
+            }}}}}],
+        },
+    }
+
+
+def test_to_dataframe_populates_conversion_goal_event_and_count_columns():
+    cgs = {
+        'UPI_TRANSACTION_STATUS': {'total': 12, 'goal_name': 'Goal 1'},
+        'PAGE_VIEWED_SHOP':       {'goal_name': 'Goal 2'},
+    }
+    campaigns = _parse_campaigns_from_response(_stats_response_for_one_campaign(cgs))
+    df = _to_dataframe(campaigns)
+    row = df.iloc[0]
+    assert row['Conversion Goal 1 Event'] == 'UPI_TRANSACTION_STATUS'
+    assert row['Goal 1 Click Through Converted Users All Platform'] == 12.0
+    assert row['Conversion Goal 2 Event'] == 'PAGE_VIEWED_SHOP'
+    assert row['Goal 2 Click Through Converted Users All Platform'] == 0.0
+    # Unused slots 3-5 still exist (empty), matching the CSV export's shape
+    assert row['Conversion Goal 3 Event'] == ''
+    assert row['primary_conversions'] == 12.0  # fallback sum, used directly by dod_daily
+
+
+def test_end_to_end_bu_aware_conversions_now_finds_real_count():
+    """The actual bug, reproduced and fixed end-to-end: a UPI - Retention
+    campaign whose real conversions sat under UPI_TRANSACTION_STATUS used
+    to come out of add_bu_aware_conversions as 0 because event-name
+    matching had nothing to match against. With Conversion Goal N Event
+    now populated, add_bu_aware_conversions (unchanged) should find it."""
+    from src.bu_conversion import add_bu_aware_conversions
+
+    cgs = {'UPI_TRANSACTION_STATUS': {'total': 37, 'goal_name': 'Goal 1'}}
+    campaigns = _parse_campaigns_from_response(_stats_response_for_one_campaign(cgs))
+    df = _to_dataframe(campaigns)
+    df['bu'] = 'UPI - Retention'
+
+    result = add_bu_aware_conversions(df)
+    assert result.iloc[0]['primary_conversions'] == 37.0
+    assert result.iloc[0]['conversion_tracked'] == True

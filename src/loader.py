@@ -80,6 +80,45 @@ def _get_all_platform_stats(item: dict) -> tuple:
         return {}, {}
 
 
+def _extract_goal_events(cgs: dict) -> dict:
+    """
+    Map the Stats API's conversion_goal_stats (keyed by real event name,
+    e.g. {'UPI_TRANSACTION_STATUS': {'total': 5, 'goal_name': 'Goal 1', ...},
+          'PAGE_VIEWED_SHOP': {'goal_name': 'Goal 2'}})
+    to {slot_number: (event_name, count)} - matching the CSV export's
+    'Conversion Goal N Event' / 'Goal N Click Through Converted Users All
+    Platform' column pairing that add_bu_aware_conversions (src/bu_conversion.py)
+    expects to find.
+
+    Caught 2026-10-06: the API loader never populated 'Conversion Goal N
+    Event' at all, so add_bu_aware_conversions' event-name matching always
+    failed for API-sourced data and silently zeroed every BU-tagged
+    campaign's real conversion count (campaigns with bu='Unknown' were the
+    only ones unaffected, since that path skips event-matching entirely -
+    which is exactly the pattern that first exposed this: a handful of
+    Unknown-BU campaigns kept nonzero conversions while every real BU's
+    went to 0 the moment this pipeline switched from CSV exports to this
+    API). Confirmed live via a DEBUG_DUMP_CGS dump that each goal's dict
+    carries its own 'goal_name' field ('Goal 1', 'Goal 2', ...) regardless
+    of whether it converted anything that day - a goal with zero
+    conversions that day only has 'goal_name', no 'total'/'unique' at all,
+    so .get(..., 0) stays required here, not optional.
+    """
+    result = {}
+    for event_name, stats in cgs.items():
+        if not isinstance(stats, dict):
+            continue
+        digits = ''.join(ch for ch in str(stats.get('goal_name', '')) if ch.isdigit())
+        if not digits:
+            continue
+        slot = int(digits)
+        if not (1 <= slot <= 5):
+            continue
+        count = float(stats.get('total', stats.get('unique', 0)) or 0)
+        result[slot] = (event_name, count)
+    return result
+
+
 def _parse_campaigns_from_response(data: dict) -> list:
     """
     Extract campaign list from MoEngage Stats API response.
@@ -138,11 +177,22 @@ def _parse_campaigns_from_response(data: dict) -> list:
             print(f'  [DEBUG_DUMP_CGS] campaign_id={campaign_id} conversion_goal_stats={cgs!r}')
             _debug_left -= 1
 
-        # Sum conversions across all goals — field is 'total' (not 'conversions')
-        total_conv = sum(
-            float(g.get('total', g.get('unique', 0)) or 0)
-            for g in cgs.values() if isinstance(g, dict)
-        )
+        # Per-goal (event name, count) keyed by slot 1-5 - see
+        # _extract_goal_events' docstring for why this replaced a blind
+        # sum across cgs.values(). total_conv (sum across all goals) is
+        # kept as a simple fallback: used directly by the dod_daily
+        # pipeline (which never calls build_master/add_bu_aware_conversions
+        # - see run_report.py's "skip build_master" comment), and as the
+        # safety net below if a response shape genuinely has no
+        # extractable goal_name slots.
+        goal_events = _extract_goal_events(cgs)
+        if goal_events:
+            total_conv = sum(count for _, count in goal_events.values())
+        else:
+            total_conv = sum(
+                float(g.get('total', g.get('unique', 0)) or 0)
+                for g in cgs.values() if isinstance(g, dict)
+            )
 
         campaigns.append({
             'campaign_id':  campaign_id,
@@ -153,6 +203,7 @@ def _parse_campaigns_from_response(data: dict) -> list:
             'ctr':          round(ctr, 4),
             'delivery_rate': float(ps.get('delivery_rate', 0) or 0),
             'conversions':  total_conv,
+            'goal_events':  goal_events,
         })
 
     return campaigns
@@ -167,7 +218,7 @@ def _to_dataframe(campaigns: list) -> pd.DataFrame:
         return pd.DataFrame()
     rows = []
     for c in campaigns:
-        rows.append({
+        row = {
             'Campaign ID':       c['campaign_id'],
             'Campaign Name':     '',   # enriched from master_enriched in run_report.py
             'Campaign Type':     'Push Notification',
@@ -178,9 +229,19 @@ def _to_dataframe(campaigns: list) -> pd.DataFrame:
             'All Platform CTR':         c['ctr'],
             'All Platform Failed':      c['failed'],
             'All Platform FCM Delivery Rate': c['delivery_rate'],
-            'Goal 1 Click Through Converted Users All Platform': c['conversions'],
-            'primary_conversions': c['conversions'],  # direct mapping for DOD dashboard
-        })
+            'primary_conversions': c['conversions'],  # fallback direct mapping for DOD dashboard
+        }
+        # 'Conversion Goal N Event' / 'Goal N Click Through Converted Users
+        # All Platform' pairs, N=1-5 - matches the CSV export's own column
+        # shape so add_bu_aware_conversions' event-name matching (which
+        # needs both halves of the pair, by slot number) works identically
+        # regardless of whether the data came from CSV or this API.
+        goal_events = c.get('goal_events', {})
+        for slot in range(1, 6):
+            event_name, count = goal_events.get(slot, ('', 0.0))
+            row[f'Conversion Goal {slot} Event'] = event_name
+            row[f'Goal {slot} Click Through Converted Users All Platform'] = count
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
